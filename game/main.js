@@ -30,10 +30,11 @@ const boot = (msg, frac) => {
   if (frac !== undefined) q('barFill').style.width = Math.round(Math.min(1, frac) * 100) + '%';
 };
 
-// Safari fires its own non-standard two-finger gesture events, which zoom the
-// page whatever `touch-action` says. `touch-action` does not cover them.
-for (const e of ['gesturestart', 'gesturechange', 'gestureend'])
-  addEventListener(e, (ev) => ev.preventDefault(), { passive: false });
+// The zoom guard USED TO LIVE HERE and has moved into the head of index.html,
+// beside the crash trap. A guard that only installs once this module has
+// evaluated is absent for the whole of the loading screen -- and absent
+// entirely if the module throws, which is exactly the moment somebody starts
+// jabbing at a page that is not responding.
 
 const renderer = new THREE.WebGLRenderer({
   canvas: q('gl'), antialias: false, powerPreference: 'high-performance' });

@@ -11,7 +11,8 @@
     "map": "python3 tools/preview.py 1600 /tmp/pdx-map.png",
     "shot": "node tools/shot.mjs",
     "geo": "python3 tools/test_geo.py",
-    "serve": "python3 -m http.server 8123"
+    "serve": "python3 -m http.server 8123",
+    "zoom": "node tools/zoom.mjs"
   },
   "devDependencies": {
     "@gltf-transform/core": "^4.5.0",

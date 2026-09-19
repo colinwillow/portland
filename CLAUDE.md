@@ -35,8 +35,32 @@ Before pushing:
 
 ```sh
 npm test                 # 63 checks against the real baked city in data/
+npm run zoom             # proves the page refuses to double-tap and pinch zoom
 node tools/shot.mjs      # boots the real page in a real Chromium and looks
 ```
+
+**No zooming, and it takes three separate guards.** Every browser gesture is
+something a thumb does by accident on a twin-stick game, and only one of the
+three is the viewport meta:
+
+* **double-tap zoom** — `touch-action` in the CSS. iOS Safari has IGNORED
+  `user-scalable=no` since iOS 10, so the meta tag is not the fix and never
+  was. It has to be on the ROOT, not only on the canvas: `touch-action` is not
+  inherited, but the browser intersects the values from the hit element up
+  through its ancestors, so `none` on `html, body` covers everything that does
+  not override it — and a double tap landing on the HUD rather than the canvas
+  is covered too. Two games in this account had it on the canvas alone and
+  zoomed on every miss.
+* **pinch zoom** — its own non-standard event family. `gesturestart` /
+  `gesturechange` / `gestureend` fire for two fingers and zoom whatever the CSS
+  says; `touch-action` does not cover them. **All three, not just the first.**
+* **`dblclick`** — belt and braces for a trackpad.
+
+**The guard is its own `<script>` in the HEAD, beside the crash trap, and
+deliberately not in a module.** One that installs when the game finishes
+loading is absent for the whole of the loading screen, and absent entirely if
+the module throws — which is exactly when somebody starts jabbing at a page
+that is not responding.
 
 ## The bar for done
 
