@@ -39,7 +39,14 @@ const CLIPS = { idle: 'idle_neutral', walk: 'walk_fwd_neutral',
                 // there is no travel to strip. Big Don's rule -- a pack that
                 // advertises itself as in-place is in-place for its CYCLES and
                 // not for its one-shots, so it gets measured either way.
-                turnL: 'turn_left', turnR: 'turn_right' };
+                turnL: 'turn_left', turnR: 'turn_right',
+                // The air flip, for the second jump. `front_flip` and not
+                // `back_flip`: the back one is authored as a STANDING flip and
+                // opens with a crouch and a push off the floor, which played in
+                // mid-air is him jumping off nothing a second time. Shredworld
+                // cuts twelve frames off its head for exactly that reason; the
+                // front one needs no trim and is the shorter clip.
+                flip: 'front_flip' };
 
 export async function loadColin(onProgress) {
   const url = new URL('../models/colin.glb', import.meta.url).href;
@@ -175,10 +182,10 @@ export function measureFacing(root) {
  * legs. Weights always sum to one -- a table that dips below it bleeds the BIND
  * POSE in, which is a T-pose, and it looks like a bug in the model.
  */
-export function animate(c, dt, speed, grounded, vy = 0, yaw = 0) {
+export function animate(c, dt, speed, grounded, vy = 0, yaw = 0, flip = -1) {
   if (!c) return;
   const A = c.actions;
-  const w = { idle: 0, walk: 0, run: 0, sprint: 0, rise: 0, fall: 0, turnL: 0, turnR: 0 };
+  const w = { idle: 0, walk: 0, run: 0, sprint: 0, rise: 0, fall: 0, turnL: 0, turnR: 0, flip: 0 };
   if (!grounded && (A.rise || A.fall)) {
     // Rising and falling are two poses and the blend between them is the arc.
     // One airborne clip is what the other games here settled on for a one-second
@@ -227,6 +234,19 @@ export function animate(c, dt, speed, grounded, vy = 0, yaw = 0) {
     w[turnKey] = tw;
   }
 
+  // THE FLIP OWNS THE WHOLE BODY WHILE IT RUNS, and it is SCRUBBED rather than
+  // played: the phase comes from the player, the clip is parked at
+  // `phase * duration`, and there is nothing to rewind and no way for the
+  // mixer's own clock to drift out of step with the jump it is meant to fill.
+  // Asking `isRunning()` or the damped weight whether a one-shot still matters
+  // is the landmine underneath both of those, one game over.
+  if (flip >= 0 && A.flip) {
+    for (const key of Object.keys(w)) w[key] = 0;
+    w.flip = 1;
+    A.flip.setEffectiveTimeScale(0);
+    A.flip.time = Math.min(0.999, flip) * A.flip.getClip().duration;
+  }
+
   const k = 1 - Math.pow(2, -dt / 0.09);
   for (const key of Object.keys(w)) {
     const a = A[key]; if (!a) continue;
@@ -235,8 +255,19 @@ export function animate(c, dt, speed, grounded, vy = 0, yaw = 0) {
   // Feet meet the ground when the cycle rate matches the speed. `run_fwd` is
   // the reference; a clip played at a rate the body is not going is the slide
   // everybody blames on the animation.
-  if (A.run) A.run.setEffectiveTimeScale(Math.max(0.55, Math.min(1.9, speed / 4.6)));
-  if (A.walk) A.walk.setEffectiveTimeScale(Math.max(0.55, Math.min(1.8, speed / 1.5)));
+  // THE REFERENCE SPEEDS ARE MEASURED AND THEY ARE SHREDWORLD'S. These are the
+  // same two clips that game has had for months, and `npm run gait` there reads
+  // them off the rig: run_fwd 4.57 m/s, walk_fwd_neutral 1.24. The walk was
+  // typed here as 1.5, which plays the cycle 20% slow for the ground he covers
+  // -- and a clip played at a rate the body is not going IS the slide everybody
+  // blames on the animation.
+  //
+  // AND THE CEILING HAS TO CLEAR THE TOP SPEED. There is no sprint clip, so
+  // run_fwd carries the whole band up to `MOVE.sprint` 9.2, which wants 2.01x.
+  // At a cap of 1.9 the fastest he can run is the one speed the feet cannot
+  // keep up with, which is exactly when it shows.
+  if (A.run) A.run.setEffectiveTimeScale(Math.max(0.55, Math.min(2.2, speed / 4.57)));
+  if (A.walk) A.walk.setEffectiveTimeScale(Math.max(0.55, Math.min(1.8, speed / 1.24)));
   if (A.sprint) A.sprint.setEffectiveTimeScale(Math.max(0.7, Math.min(1.8, speed / 7.6)));
   // Same rule one axis over: a turn clip played at a rate the body is not
   // turning at is the slide everybody blames on the animation.

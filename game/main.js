@@ -91,7 +91,7 @@ let dbg = 0;
     const nfar = await world.loadFar();
     // After the skyline, because the helicopter orbits where the skyline SAYS
     // downtown is -- built before it, and it would circle the world origin.
-    ambient = new Ambient(scene, THREE, manifest, world);
+    ambient = new Ambient(scene, THREE, manifest, world, ground);
 
     boot('the streets', 0.2);
     // Build the spawn's neighbourhood before anything else, synchronously
@@ -165,11 +165,15 @@ function frame(now) {
   const w = window.pdx && window.pdx.__walk;
   if (w && w.t > 0) { w.t -= dt; mv = { x: w.x, y: w.y, mag: 1, run: false }; }
   camera.step(dt, player, lk, ground);
+  // BEFORE the player, so he resolves against where the traffic IS and not
+  // where it was a frame ago. At 13.5 m/s a stale box is a quarter of a metre
+  // out, which on a car-sized object is the difference between a bonnet you
+  // stand on and one you are standing in.
+  if (ambient) ambient.step(dt, player.x, player.y, player.z, world.loaded(), manifest.classes.road);
   player.step(dt, ground, mv, camera.az, sticks.jump());
   world.update(player.x, player.z);
   if (signs) signs.update(dt, player.x, player.z, world.loaded(), collectBoards);
   if (crowd) crowd.step(dt, player.x, player.z, world.loaded(), manifest.classes.road);
-  if (ambient) ambient.step(dt, player.x, player.y, player.z, world.loaded(), manifest.classes.road);
   // AFTER world.update, which is what creates and drops the chunk buffers it
   // writes into -- a hero holding a range in a geometry that was disposed on
   // the same frame writes into nothing, and does it silently.
@@ -179,7 +183,7 @@ function frame(now) {
   if (colin) {
     colin.root.position.set(player.x, player.y, player.z);
     colin.root.rotation.y = -player.facing;
-    animate(colin, dt, player.speed, player.grounded, player.vy, player.yawRate);
+    animate(colin, dt, player.speed, player.grounded, player.vy, player.yawRate, player.flip);
   }
 
   renderer.render(scene, cam);

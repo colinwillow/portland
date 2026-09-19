@@ -59,7 +59,10 @@ export const CHAR = { emissive: 0.55, height: 1.78 };
 export const TURN = {
   dead: 0.9,             // rad/s below which a turn is not worth a clip
   full: 3.4,             // and where it is worth the whole of one
-  ref: 2.6,              // the rate the clip itself reads as; it is time-scaled
+  // MEASURED, not guessed: `turn_left` / `turn_right` are 0.967 s and carry a
+  // half turn, which is PI / 0.967 = 3.25 rad/s at 1x. 2.6 was a guess and it
+  // played the clip a quarter fast for the rate he was actually turning at.
+  ref: 3.25,             // the rate the clip itself reads as; it is time-scaled
   // The speed it has faded out entirely by. Pinned to the WALK first time and
   // measured at a peak weight of 0.17, which is invisible: the turn brake bottoms
   // a braked reversal out at 3 m/s, well over a walk, so the window the clip was
@@ -79,6 +82,10 @@ export const CAM = {
   orbitRate: 2.5,       // radians per second at full right-stick deflection
   followHL: 0.22,       // half-life of the boom easing in behind him
   lookHL: 0.10,
+  // How fast the shot answers. `pitchHL` is what stops the lift steps popping;
+  // `boomIn` is deliberately tiny rather than zero -- fast enough that nothing
+  // is ever seen through, slow enough that it is a move and not a cut.
+  pitchHL: 0.30, boomIn: 0.035, boomOut: 0.5,
   probe: 0.6,           // metres per step when the boom is looking for a wall
   fov: 62,
 };
@@ -96,10 +103,16 @@ export const MOVE = {
   // At 0.8 a right angle asks for 60% of top and a 180 for 20%, which is under
   // a walk -- so a reversal is a thing he visibly does rather than a sprint with
   // a new bearing on it.
-  turnBrake: 0.55,
+  turnBrake: 0.35,
   // The least of his top speed he can have while facing the wrong way outright.
   // He turns first and then goes, rather than sprinting sideways.
-  plant: 0.28,
+  // HE TURNS FIRST AND THEN GOES. At 0.28 a body pointing the wrong way still
+  // travelled at 1.8 m/s, which is the "he slides around instead of rotating in
+  // place and then moving" -- a man moving at a walk in a direction he is not
+  // facing. At 0.07 there is nothing left of it: square on he is at full speed,
+  // ninety degrees off he is barely moving, and the turn happens where it can
+  // be seen. `turnBrake` came down with it, because this now does that job.
+  plant: 0.07,
   // The body's yaw, and it takes all three. `faceHL` is the SHAPE, `turnRate`
   // is the CEILING (without it the first frame of a reversal spins him at
   // 1071 deg/s) and `turnMin` is the FLOOR -- an exponential never arrives, and
@@ -140,6 +153,11 @@ export const MOVE = {
   // buildings round the spawn rather than a seventh, so it is worth having
   // rather than worth having twice.
   second: 0.85,
+  // The flip fills the air he has left rather than playing at its own length --
+  // `front_flip` is 0.80 s against 1.11 s of hang, so at 1x it would finish
+  // three quarters of the way up. Short of the whole flight on purpose: a
+  // rotation that is still going at the moment he lands reads as a bail.
+  flipFill: 0.85,
   airControl: 0.35,
   radius: 0.42,          // his collision cylinder
   eye: 1.72,
@@ -305,6 +323,35 @@ export const PROP = {
   car:           { h: 1.48, c: 0xb6bbc0, kind: 'car' },
 };
 export const PROP_DEFAULT = { h: 1.2, c: 0x8a8578, kind: 'box' };
+
+// WHAT A PROP IS TO WALK INTO, BY ITS `kind`. Every one of these was scenery
+// until now -- you walked through every tree, lamp post, bench, bin and parked
+// car in Portland, which is most of what there is to walk into on a pavement.
+//
+// `r` is a CYLINDER's radius and it is the trunk or the post, never the canopy:
+// a tree rasterised honestly is a solid ceiling at head height, and a trunk is
+// the right abstraction for a tree. `box` is a half-length and half-width for
+// the things that are plainly not round, which on this list is the parked car
+// and nothing else -- the axis-aligned bounds of a car at 45 degrees are forty
+// per cent bigger than the car along BOTH axes, and that is the phantom hit
+// where the collider touches you and the mesh plainly does not.
+//
+// `top` is how much of the prop's own height you can stand ON. A car roof and a
+// bench are places to be; a lamp post's top is seven metres up a pole you could
+// never reach and would be a magic platform if you did, so it is 0 = not a floor.
+export const PROP_HIT = {
+  broadleaf: { r: 0.30 },
+  conifer:   { r: 0.34 },
+  lamp:      { r: 0.13 },
+  pole:      { r: 0.20 },
+  signal:    { r: 0.16 },
+  sign:      { r: 0.12 },
+  post:      { r: 0.16 },
+  box:       { r: 0.42, top: 1 },
+  bench:     { r: 0.55, top: 1 },
+  rack:      { r: 0.50 },
+  car:       { box: [2.25, 0.92], top: 1 },
+};
 // Tree crowns pick one of these, indexed by the bake's `tint` byte, so one row of
 // street trees is a row of trees rather than a row of one tree.
 export const LEAF_TINTS = [0x5c8a40, 0x6e9b45, 0x47733a, 0x7fa64e,
@@ -450,8 +497,13 @@ export const STREAM = {
 // ---------------------------------------------------------------------------
 export const TRAFFIC = {
   count: 30,           // cars in the pool
-  spawn: 130,          // metres: where a free one may appear
-  keep: 230,           // and where it gives its seat back
+  // A CAR MUST BE BORN OUT OF SIGHT. `spawn` was 130 against a `draw` of 200, so
+  // every car in the fleet materialised seventy metres INSIDE the distance you
+  // can see it at -- which is the popping in and out of existence, and it is
+  // arithmetic rather than anything subtle. Seated past the draw distance and
+  // given back past that again, a car only ever fades up at the edge.
+  spawn: 215,          // metres: where a free one may appear
+  keep: 260,           // and where it gives its seat back
   draw: 200,
   speed: [7.0, 13.5],  // m/s -- 25 to 30 mph, which is what these streets are
   slow: 0.55,          // how much of that a residential street gets

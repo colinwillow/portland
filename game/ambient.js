@@ -27,9 +27,10 @@ const mul = (c, k) => [Math.min(255, c[0] * k) | 0, Math.min(255, c[1] * k) | 0,
 const lerp = (a, b, t) => a + (b - a) * t;
 
 export class Ambient {
-  constructor(scene, THREE, manifest, world) {
+  constructor(scene, THREE, manifest, world, ground) {
     this.THREE = THREE;
     this.world = world;
+    this.ground = ground || null;
     this.lanes = new Pavements(TRAFFIC.on);
     this.cars = [];
     this.netT = 99;
@@ -164,6 +165,22 @@ export class Ambient {
       // of step with the speed however that is retuned.
       c.roll = (c.roll || 0) + v * dt / (TRAFFIC.wheelR * c.tall / TRAFFIC.tall);
       if ((c.x - px) ** 2 + (c.z - pz) ** 2 > keep2) c.live = false;
+    }
+
+    // HAND THE FLEET TO THE COLLIDER. A car you can walk through is a painting
+    // of a car, and the roof of one is somewhere to land -- which is what was
+    // asked for. `y` is the underside and `top` the roof, both measured off the
+    // same numbers `car()` draws with, so the box cannot drift from the picture.
+    // Half extents, in the car's own frame: `hl` along its nose.
+    if (this.ground) {
+      const solid = [];
+      for (const c of this.cars) {
+        if (!c.live) continue;
+        solid.push({ x: c.x, z: c.z, y: c.y, yaw: c.yaw, r: 0,
+                     hl: c.len * 0.5, hw: c.wide * 0.5,
+                     hi: c.y + c.tall, top: c.y + c.tall });
+      }
+      this.ground.setMovers(solid);
     }
   }
 

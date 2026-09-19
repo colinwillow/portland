@@ -28,6 +28,8 @@ export class Player {
     this.airT = 0;
     this.yawRate = 0;        // signed, rad/s; + is a turn to his right
     this.jumps = 0;          // spent since he last touched the ground
+    this.flip = -1;          // phase 0..1 through the air flip, -1 when there is none
+    this.flipDur = 0.7;
     this.swimming = false;
     this.wantRun = true;
     // Ghost is for looking at the city, not for playing it: no gravity, no
@@ -115,6 +117,12 @@ export class Player {
         this.vy = MOVE.jump; this.grounded = false; this.airT = 0; this.jumps = 1;
       } else if (this.jumps > 0 && this.jumps < MOVE.jumps) {
         this.vy = MOVE.jump * MOVE.second; this.jumps++;
+        // AND HE GOES OVER. The clip is fitted to the air he has just bought --
+        // 2v/g is the whole hang, and the flip takes `flipFill` of it -- rather
+        // than played at its own length, which would finish three quarters of
+        // the way up and leave him falling out of a landing pose.
+        this.flip = 0;
+        this.flipDur = MOVE.flipFill * 2 * (MOVE.jump * MOVE.second) / MOVE.g;
       }
     }
     this.vy -= MOVE.g * dt;
@@ -153,6 +161,14 @@ export class Player {
     } else {
       this.airT += dt;
       if (this.airT > MOVE.coyote) this.grounded = false;
+    }
+
+    // The flip runs on its own clock and the GROUND ends it: a rotation still
+    // going on the frame he lands reads as a bail, and one held after landing
+    // is the clip welded on, which is a bug this account has paid for twice.
+    if (this.flip >= 0) {
+      this.flip += dt / this.flipDur;
+      if (this.flip >= 1 || this.grounded) this.flip = -1;
     }
 
     this.speed = Math.hypot(this.vx, this.vz);

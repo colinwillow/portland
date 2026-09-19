@@ -20,6 +20,7 @@ export class Camera {
     this.dist = CAM.dist;
     this.have = CAM.dist;
     this.lx = 0; this.ly = 0; this.lz = 0;
+    this.shot = CAM.pitch;
     this.high = false;
   }
 
@@ -40,20 +41,36 @@ export class Camera {
     // half a metre behind his head and nothing will make a shot out of that.
     // Swinging the BEARING would fight the thumb that owns it; swinging the
     // PITCH does not, and in a city the sky is the one direction that is always
-    // open. Three probes, and the shallowest that has room wins.
-    let pitch = this.pitch, free = 0, bx = 0, by = 0, bz = 0;
+    // open. Four probes, and the shallowest that has room wins.
+    let want = this.pitch, free = 0;
     for (const lift of CAM.lifts) {
       const p = Math.min(CAM.pitchMax, this.pitch + lift);
       const ca = Math.cos(p);
-      const tx = -Math.sin(this.az) * ca, tz = Math.cos(this.az) * ca, ty = Math.sin(p);
-      const f = this.probe(ground, this.lx, this.ly, this.lz, tx, ty, tz, CAM.dist);
-      if (f > free) { free = f; pitch = p; bx = tx; by = ty; bz = tz; }
+      const f = this.probe(ground, this.lx, this.ly, this.lz,
+                           -Math.sin(this.az) * ca, Math.sin(p), Math.cos(this.az) * ca, CAM.dist);
+      if (f > free) { free = f; want = p; }
       if (f >= CAM.room) break;
     }
-    this.shot = pitch;
-    // Snap in, ease out.
-    this.have = free < this.have ? free
-      : this.have + (free - this.have) * (1 - Math.pow(2, -dt / 0.5));
+
+    // AND THE ANSWER IS EASED, WHICH IS THE WHOLE FIX FOR THE POPPING.
+    // `CAM.lifts` steps by 0.34 rad -- NINETEEN DEGREES -- so the frame the
+    // probe changed its mind the lens jumped a fifth of a turn and the shot
+    // teleported. The probe picking a different rung is a decision about where
+    // the camera should END UP, never about where it is this frame. It costs one
+    // more probe, because the boom has to be measured along the pitch actually
+    // being used rather than along the one that was chosen.
+    this.shot += (want - this.shot) * (1 - Math.pow(2, -dt / CAM.pitchHL));
+    const cs = Math.cos(this.shot);
+    const bx = -Math.sin(this.az) * cs, by = Math.sin(this.shot), bz = Math.cos(this.az) * cs;
+    const room = this.probe(ground, this.lx, this.ly, this.lz, bx, by, bz, CAM.dist);
+
+    // IN FAST, OUT SLOW -- but in is a fast EASE and not a teleport. Easing in
+    // properly is time spent inside a wall, which is a black screen; setting it
+    // outright is the other thing he was watching, a lens that arrives in a new
+    // place between one frame and the next. Two frames of half-life is under a
+    // twentieth of a second and there is nothing to see through in that time.
+    const hl = room < this.have ? CAM.boomIn : CAM.boomOut;
+    this.have += (room - this.have) * (1 - Math.pow(2, -dt / hl));
     // CLAMPING TO A MINIMUM PUTS THE LENS INSIDE THE WALL. The probe returns
     // how much room there actually is; taking `max(minDist, that)` overrides it
     // with a number that is by definition too big, and a camera inside a

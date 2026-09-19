@@ -13,7 +13,7 @@
 // coarser one for the mesh is the obvious shortcut and it puts his feet a metre
 // under the visible hillside.
 
-import { MOVE } from './tune.js';
+import { MOVE, PROP, PROP_DEFAULT, PROP_HIT } from './tune.js';
 
 const BUCKET = 16;      // metres per spatial-hash cell
 
@@ -27,7 +27,13 @@ export class Ground {
     this.terr = new Map();          // "i,j" -> {m, h, x0, z0}
     this.solids = new Map();        // bucket -> [building]
     this.decks = new Map();         // bucket -> [deck triangle]
+    this.props = new Map();         // bucket -> [prop: a cylinder or an oriented box]
     this.chunkBuckets = new Map();  // "i,j" -> [bucket keys] for teardown
+    // THE TRAFFIC IS NOT IN A BUCKET, because it moves. Thirty cars re-bucketed
+    // every frame is thirty deletions and thirty inserts to save a loop over
+    // thirty records, and `ambient` already rebuilds the whole fleet each frame
+    // anyway -- so it simply hands the list over and this walks it.
+    this.movers = [];
   }
 
   key(x, z) { return ((x / BUCKET) | 0) + ',' + ((z / BUCKET) | 0); }
@@ -40,10 +46,11 @@ export class Ground {
     // Every record is stamped with the chunk that made it: a bucket straddles
     // a chunk boundary and holds its neighbour's buildings too, so teardown has
     // to filter rather than drop, and it needs to know whose is whose.
+    const tag = (map) => map === this.solids ? 's' : map === this.decks ? 'd' : 'p';
     const push = (map, k, v) => {
       v._c = id;
       let a = map.get(k); if (!a) map.set(k, a = []);
-      a.push(v); touched.add((map === this.solids ? 's' : 'd') + k);
+      a.push(v); touched.add(tag(map) + k);
     };
 
     for (const b of c.bldg) {
@@ -65,6 +72,37 @@ export class Ground {
       if (!(r.flags & 1)) continue;        // only bridges make a second surface
       addDeck(this, r, x0, z0, push);
     }
+
+    // EVERY PROP IN THE CHUNK, IF ITS KIND HAS A SHAPE. Unlisted kinds stay
+    // scenery on purpose -- a hydrant you cannot step over is worse than one you
+    // walk through, and a thing has to be added here deliberately.
+    const P = c.prop;
+    if (P && classNames && classNames.prop) {
+      for (let i = 0; i < P.n; i++) {
+        const look = PROP[classNames.prop[P.kind[i]]] || PROP_DEFAULT;
+        const hit = PROP_HIT[look.kind];
+        if (!hit) continue;
+        const sc = P.scale[i];
+        const px = P.pos[i*3] + x0, py = P.pos[i*3+1], pz = P.pos[i*3+2] + z0;
+        const rec = { x: px, z: pz, y: py, yaw: P.yaw[i],
+                      // Its OWN height times its own scale, so a big tree is a
+                      // fat trunk and a small one is not.
+                      r: hit.r ? hit.r * sc : 0,
+                      hl: hit.box ? hit.box[0] * sc : 0,
+                      hw: hit.box ? hit.box[1] * sc : 0,
+                      // `hi` is how tall it is SOLID; `top` is how high you can
+                      // stand ON it, and they are not the same question. A lamp
+                      // post is solid to seven metres and is a floor at none of
+                      // them -- collapsing the two makes every prop you cannot
+                      // stand on into a prop you walk straight through.
+                      hi: py + look.h * sc,
+                      top: hit.top ? py + look.h * sc : -1e9, _c: id };
+        const reach = Math.max(rec.r, Math.hypot(rec.hl, rec.hw));
+        for (let bx = ((px-reach)/BUCKET)|0; bx <= ((px+reach)/BUCKET)|0; bx++)
+          for (let bz = ((pz-reach)/BUCKET)|0; bz <= ((pz+reach)/BUCKET)|0; bz++)
+            push(this.props, bx + ',' + bz, rec);
+      }
+    }
     this.chunkBuckets.set(id, [...touched]);
   }
 
@@ -76,7 +114,7 @@ export class Ground {
     // Rebuild only the buckets this chunk touched. A bucket can hold records
     // from a neighbour, so it is filtered rather than dropped.
     for (const k of keys) {
-      const map = k[0] === 's' ? this.solids : this.decks;
+      const map = k[0] === 's' ? this.solids : k[0] === 'd' ? this.decks : this.props;
       const bk = k.slice(1);
       const a = map.get(bk);
       if (!a) continue;
@@ -100,19 +138,58 @@ export class Ground {
     return (a*(1-fu) + b*fu)*(1-fv) + (c*(1-fu) + d*fu)*fv;
   }
 
-  /** Highest walkable surface at or a step above `hint`. */
+  /**
+   * Highest walkable surface at or a step above `hint`.
+   *
+   * FOUR THINGS ARE FLOORS AND FOR A LONG TIME ONLY TWO OF THEM WERE. Terrain
+   * and bridge decks were in; a building's ROOF and a car's ROOF were not, so
+   * every jump in the city landed back on the ground it left however high it
+   * went and there was nothing to get onto. A roof is the top of a footprint
+   * you are standing inside, which is the same point-in-polygon the push-out
+   * already does -- it was never a question of new data, only of asking.
+   *
+   * The `hint + step` ceiling is what keeps them out of the way: stood in the
+   * street beside a nine-metre block, its roof is nine metres over the ceiling
+   * and cannot be picked; landing on it from above, it is under your feet.
+   */
   groundAt(x, z, hint) {
     let best = this.terrainAt(x, z);
-    const list = this.decks.get(this.key(x, z));
-    if (list) {
-      const ceil = hint + MOVE.step;
-      for (const t of list) {
-        const y = triY(x, z, t);
-        if (y !== null && y <= ceil && y > best) best = y;
-      }
+    const ceil = hint + MOVE.step;
+    const k = this.key(x, z);
+
+    const deck = this.decks.get(k);
+    if (deck) for (const t of deck) {
+      const y = triY(x, z, t);
+      if (y !== null && y <= ceil && y > best) best = y;
+    }
+    // A roof. The bucket is the one the POINT is in, and a building is pushed
+    // into every bucket its footprint touches, so this cannot miss one.
+    const sol = this.solids.get(k);
+    if (sol) for (const b of sol) {
+      if (b.top > ceil || b.top <= best) continue;
+      if (x < b.minx || x > b.maxx || z < b.minz || z > b.maxz) continue;
+      if (inRing(x, z, b)) best = b.top;
+    }
+    const pr = this.props.get(k);
+    if (pr) for (const o of pr) {
+      if (o.top > ceil || o.top <= best) continue;
+      if (propInside(x, z, o, 0)) best = o.top;
+    }
+    for (const m of this.movers) {
+      if (m.top > ceil || m.top <= best) continue;
+      if (propInside(x, z, m, 0)) best = m.top;
     }
     return best;
   }
+
+  /**
+   * The moving traffic, handed over each frame rather than bucketed.
+   *
+   * It is a LIST and not a map because it is thirty records and it all moves:
+   * re-bucketing the fleet every frame costs more than walking it, and
+   * `ambient` is rebuilding the whole thing into one geometry anyway.
+   */
+  setMovers(list) { this.movers = list; }
 
   /** Is there deck overhead? Used to keep the camera from popping through one. */
   ceilingAt(x, z, from) {
@@ -143,14 +220,29 @@ export class Ground {
     for (let i = bx - 1; i <= bx + 1; i++) {
       for (let j = bz - 1; j <= bz + 1; j++) {
         const list = this.solids.get(i + ',' + j);
-        if (!list) continue;
-        for (const b of list) {
+        if (list) for (const b of list) {
           if (y > b.top - 0.15 || y + MOVE.eye < b.base) continue;
           if (x < b.minx - r || x > b.maxx + r || z < b.minz - r || z > b.maxz + r) continue;
           const push = pushOut(x, z, r, b);
           if (push) { x += push[0]; z += push[1]; hit = true; }
         }
+        // ON TOP OF IT IS NOT INSIDE IT, and the test has to be the same number
+        // the floor uses or he is pushed off whatever he just landed on. `top`
+        // for a thing you cannot stand on is -1e9, so a lamp post is solid to
+        // the full height of its post and never a floor.
+        const pr = this.props.get(i + ',' + j);
+        if (pr) for (const o of pr) {
+          if (y >= o.hi - 0.15 || y + MOVE.eye < o.y) continue;
+          const push = pushProp(x, z, r, o);
+          if (push) { x += push[0]; z += push[1]; hit = true; }
+        }
       }
+    }
+    for (const m of this.movers) {
+      if (y >= m.hi - 0.15 || y + MOVE.eye < m.y) continue;
+      if (Math.abs(x - m.x) > 8 || Math.abs(z - m.z) > 8) continue;
+      const push = pushProp(x, z, r, m);
+      if (push) { x += push[0]; z += push[1]; hit = true; }
     }
     return [x, z, hit];
   }
@@ -193,6 +285,56 @@ function triY(x, z, t) {
   const v = (v0x * pz - px * v0z) / den;
   if (u < -0.001 || v < -0.001 || u + v > 1.001) return null;
   return t.ay + (t.by - t.ay) * u + (t.cy - t.ay) * v;
+}
+
+/** Point in a building's footprint: the same crossing count `pushOut` runs. */
+function inRing(x, z, b) {
+  let inside = false;
+  const ring = b.ring, nv = b.nv;
+  for (let i = 0, j = nv - 1; i < nv; j = i++) {
+    const xi = ring[i*2], zi = ring[i*2+1], xj = ring[j*2], zj = ring[j*2+1];
+    if ((zi > z) !== (zj > z) && x < (xj - xi) * (z - zi) / (zj - zi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+/** Point inside a prop's plan, grown by `pad`. Circle or the box's own frame. */
+function propInside(x, z, o, pad) {
+  if (o.r) return (x - o.x) ** 2 + (z - o.z) ** 2 <= (o.r + pad) ** 2;
+  const ca = Math.cos(o.yaw), sa = Math.sin(o.yaw);
+  // Forward is (sin yaw, -cos yaw), which is what `ambient.car` draws along, so
+  // the LENGTH is measured along that and the width across it. Deriving this a
+  // second time is how the two end up a quarter turn apart.
+  const dx = x - o.x, dz = z - o.z;
+  const f = dx * sa - dz * ca, g = dx * ca + dz * sa;
+  return Math.abs(f) <= o.hl + pad && Math.abs(g) <= o.hw + pad;
+}
+
+/**
+ * Push a circle out of a prop.
+ *
+ * A cylinder is radial and exact. A box is resolved along the SHALLOWEST AXIS
+ * IN ITS OWN FRAME -- pushing along the vector to the nearest corner flicks you
+ * diagonally round it, and testing its axis-aligned bounds instead would make a
+ * car at 45 degrees forty per cent bigger than the car along both axes, which
+ * is the phantom hit where the collider touches you and the mesh does not.
+ */
+function pushProp(x, z, r, o) {
+  if (o.r) {
+    const dx = x - o.x, dz = z - o.z;
+    const d = Math.hypot(dx, dz), reach = o.r + r;
+    if (d >= reach) return null;
+    if (d < 1e-6) return [reach, 0];
+    return [dx / d * (reach - d), dz / d * (reach - d)];
+  }
+  const ca = Math.cos(o.yaw), sa = Math.sin(o.yaw);
+  const dx = x - o.x, dz = z - o.z;
+  const f = dx * sa - dz * ca, g = dx * ca + dz * sa;      // along, across
+  const pf = o.hl + r - Math.abs(f), pg = o.hw + r - Math.abs(g);
+  if (pf <= 0 || pg <= 0) return null;
+  if (pf < pg) { const s = (f < 0 ? -1 : 1) * pf; return [s * sa, -s * ca]; }
+  const s = (g < 0 ? -1 : 1) * pg;
+  return [s * ca, s * sa];
 }
 
 function pushOut(x, z, r, b) {
