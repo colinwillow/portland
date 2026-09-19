@@ -91,7 +91,11 @@ if (args.walk !== undefined) {
 // settles. Some of what there is to look at is on a TIMER -- an airliner is
 // every half minute or so on purpose -- and waiting one out is not a thing a
 // harness should do.
-if (args.js) console.log('js:', JSON.stringify(await page.evaluate((src) => eval(src), args.js)));
+// A FILE, not just an expression: anything worth measuring is more than one
+// line, and shell quoting eats the rest. `--js` still takes an expression.
+if (args.jsfile) args.js = fs.readFileSync(args.jsfile, 'utf8');
+if (args.js) console.log('js:', await page.evaluate(
+  (src) => (new Function(src))(), args.js));
 
 // Let it stream: the frame budget builds one chunk per frame on purpose, so an
 // immediate screenshot is a picture of the loader rather than of the city.

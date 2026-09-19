@@ -179,7 +179,7 @@ function frame(now) {
   if (colin) {
     colin.root.position.set(player.x, player.y, player.z);
     colin.root.rotation.y = -player.facing;
-    animate(colin, dt, player.speed, player.grounded, player.vy);
+    animate(colin, dt, player.speed, player.grounded, player.vy, player.yawRate);
   }
 
   renderer.render(scene, cam);
@@ -258,6 +258,12 @@ q('mapWrap').onclick = () => { q('mapWrap').classList.remove('on'); q('mapHint')
 
 // The console handle, the same shape every other game in this account has.
 window.pdx = { get player() { return player; }, get world() { return world; },
+               // The pads and the character, for the console and for
+               // `tools/thumbs.mjs`. `__animate` is a harness hook beside
+               // `__walk`: the gait is a pure weight table and the only way to
+               // ask what it is doing on a real rig is to step it yourself.
+               get sticks() { return sticks; },
+               get colin() { return colin; }, __animate: animate,
                get ground() { return ground; }, get camera() { return camera; },
                get ambient() { return ambient; },
                get hero() { return hero; },

@@ -23,7 +23,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from '../vendor/GLTFLoader.js';
 import { DRACOLoader } from '../vendor/DRACOLoader.js';
-import { MOVE, CHAR } from './tune.js';
+import { MOVE, CHAR, TURN } from './tune.js';
 
 const TARGET_H = 1.78;
 // The Shredworld export, cut to the clips a city needs by
@@ -33,7 +33,13 @@ const TARGET_H = 1.78;
 // for taking this export over the older slimmer one.
 const CLIPS = { idle: 'idle_neutral', walk: 'walk_fwd_neutral',
                 run: 'run_fwd', rise: 'jump_going_up', fall: 'jump_coming_down',
-                land: 'landing_roll', wave: 'waving' };
+                land: 'landing_roll', wave: 'waving',
+                // Both measured IN PLACE before wiring them: 6.5 cm of hip sway
+                // across the whole clip, the same order as the idle's 1.6 cm, so
+                // there is no travel to strip. Big Don's rule -- a pack that
+                // advertises itself as in-place is in-place for its CYCLES and
+                // not for its one-shots, so it gets measured either way.
+                turnL: 'turn_left', turnR: 'turn_right' };
 
 export async function loadColin(onProgress) {
   const url = new URL('../models/colin.glb', import.meta.url).href;
@@ -169,10 +175,10 @@ export function measureFacing(root) {
  * legs. Weights always sum to one -- a table that dips below it bleeds the BIND
  * POSE in, which is a T-pose, and it looks like a bug in the model.
  */
-export function animate(c, dt, speed, grounded, vy = 0) {
+export function animate(c, dt, speed, grounded, vy = 0, yaw = 0) {
   if (!c) return;
   const A = c.actions;
-  const w = { idle: 0, walk: 0, run: 0, sprint: 0, rise: 0, fall: 0 };
+  const w = { idle: 0, walk: 0, run: 0, sprint: 0, rise: 0, fall: 0, turnL: 0, turnR: 0 };
   if (!grounded && (A.rise || A.fall)) {
     // Rising and falling are two poses and the blend between them is the arc.
     // One airborne clip is what the other games here settled on for a one-second
@@ -193,6 +199,34 @@ export function animate(c, dt, speed, grounded, vy = 0) {
     w.run = 1 - t; w.sprint = t;
   }
   if (!A.sprint) { w.run += w.sprint; w.sprint = 0; }
+
+  // TURNING ON THE SPOT IS A CLIP, NOT A YAW ON THE ROOT. The body coming round
+  // with the feet planted is what reads as sliding, however well the rate is
+  // limited -- and this export has had `turn_left` and `turn_right` in it the
+  // whole time. It fades out with speed because at a run the gait is already
+  // doing the turning, and a turn-in-place laid over a sprint is two things at
+  // once. POSITIVE YAW IS TO HIS RIGHT (see `player.yawRate`).
+  // FULL WEIGHT UP TO A WALK, then fading out by `TURN.upTo`. A plain ramp from
+  // zero speed was measured at a peak of 0.19 and then 0.45 -- `plant` holds a
+  // turn at about 1.8 m/s, which a ramp that starts falling at zero has already
+  // taxed most of the way down, and half a turn clip under half a gait is not a
+  // step-turn, it is a smear.
+  const fade = speed <= MOVE.walk ? 1
+    : speed >= TURN.upTo ? 0
+    : 1 - (speed - MOVE.walk) / (TURN.upTo - MOVE.walk);
+  const tw = grounded
+    ? Math.min(1, Math.max(0, (Math.abs(yaw) - TURN.dead) / (TURN.full - TURN.dead))) * fade
+    : 0;
+  const turnKey = yaw >= 0 ? 'turnR' : 'turnL';
+  if (tw > 0 && A[turnKey]) {
+    // Scale what is already there rather than adding on top: WEIGHTS HAVE TO
+    // SUM TO ONE. A table that dips below it blends the BIND POSE back in, and
+    // the bind pose is a T-pose, which reads as a broken model rather than as a
+    // leaked weight.
+    for (const key of Object.keys(w)) w[key] *= 1 - tw;
+    w[turnKey] = tw;
+  }
+
   const k = 1 - Math.pow(2, -dt / 0.09);
   for (const key of Object.keys(w)) {
     const a = A[key]; if (!a) continue;
@@ -204,5 +238,10 @@ export function animate(c, dt, speed, grounded, vy = 0) {
   if (A.run) A.run.setEffectiveTimeScale(Math.max(0.55, Math.min(1.9, speed / 4.6)));
   if (A.walk) A.walk.setEffectiveTimeScale(Math.max(0.55, Math.min(1.8, speed / 1.5)));
   if (A.sprint) A.sprint.setEffectiveTimeScale(Math.max(0.7, Math.min(1.8, speed / 7.6)));
+  // Same rule one axis over: a turn clip played at a rate the body is not
+  // turning at is the slide everybody blames on the animation.
+  const ts = Math.max(TURN.lo, Math.min(TURN.hi, Math.abs(yaw) / TURN.ref));
+  if (A.turnL) A.turnL.setEffectiveTimeScale(ts);
+  if (A.turnR) A.turnR.setEffectiveTimeScale(ts);
   c.mixer.update(dt);
 }

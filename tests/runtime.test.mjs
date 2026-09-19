@@ -18,7 +18,8 @@ import { Hero } from '../game/hero.js';
 import { Ground } from '../game/ground.js';
 import { Overrides } from '../game/overrides.js';
 import { Player } from '../game/player.js';
-import { MOVE, AIR, HERO, PROP as PROPS } from '../game/tune.js';
+import { animate } from '../game/character.js';
+import { MOVE, AIR, HERO, PROP as PROPS, TURN } from '../game/tune.js';
 
 const DATA = path.resolve('data');
 const M = JSON.parse(fs.readFileSync(path.join(DATA, 'manifest.json'), 'utf8'));
@@ -262,6 +263,7 @@ describe('locomotion', () => {
   for (let dj = -2; dj <= 2; dj++) for (let di = -2; di <= 2; di++)
     g.addChunk(ci + di, cj + dj, read(ci + di, cj + dj), NAMES);
 
+  const wrapA = (a) => { while (a > Math.PI) a -= 2*Math.PI; while (a < -Math.PI) a += 2*Math.PI; return a; };
   const step = (p, move, camAz, n = 120, dt = 1 / 60) => {
     for (let k = 0; k < n; k++) p.step(dt, g, move, camAz, false);
   };
@@ -291,6 +293,100 @@ describe('locomotion', () => {
     expect(Math.abs(p.z - z0)).toBeLessThan(Math.abs(p.x - x0));
   });
 
+  // THE TURN. These three are the "he rotates about a point five or ten feet
+  // behind him and slides round it" report, measured. There is no offset in the
+  // rig -- a 360 deg sweep puts his hips within 4 mm of the player at every
+  // bearing -- so the pivot is made entirely by the BODY's yaw rate and the
+  // TRAVEL's turn rate disagreeing. A rigid body whose yaw changes while its
+  // path stays straight has its instantaneous centre out at |v| / omega, and at
+  // a full run with the body still coming round at 100 deg/s that is twelve feet.
+  //
+  // Ask what these would pass with: a check on "does he end up facing the thumb"
+  // passes on every one of the broken versions, because an exponential does get
+  // there eventually. What has to be pinned is WHEN, and at what rate.
+  const turnTrial = (turn, warm = 90) => {
+    const p = new Player(M.spawn);
+    step(p, { x: 0, y: -1, mag: 1, run: false }, 0, warm);
+    let pv = Math.atan2(p.vx, -p.vz), peak = 0, arrive = -1, slide = 0, worstFt = 0;
+    for (let i = 0; i < 180; i++) {
+      p.step(1 / 60, g, turn, 0, false);
+      const v = Math.atan2(p.vx, -p.vz);
+      const vRate = Math.abs(wrapA(v - pv)) / (1 / 60) * 57.3;
+      const bRate = Math.abs(p.yawRate) * 57.3;
+      pv = v;
+      if (bRate > peak) peak = bRate;
+      if (bRate > 30 && vRate < 15 && p.speed > 1) {
+        slide++;
+        const ft = p.speed / Math.abs(p.yawRate) * 3.281;
+        if (ft > worstFt) worstFt = ft;
+      }
+      if (arrive < 0 && Math.abs(wrapA(p.heading - p.facing)) < 0.02) arrive = i / 60;
+    }
+    return { peak, arrive, slide, worstFt, p };
+  };
+
+  it('never spins the body faster than the feet can redirect him', () => {
+    // The ceiling is not a taste number: it is `turnAccel / run`, the rate the
+    // VELOCITY can be turned at a full run. Give the body the same one and the
+    // two finish together by construction. Before this the opening frame of a
+    // reversal put him through 562 deg/s -- one and a half turns a second.
+    expect(MOVE.turnRate).toBeCloseTo(MOVE.turnAccel / MOVE.run, 1);
+    for (const t of [{ x: 1, y: 0, mag: 1, run: false }, { x: 0, y: 1, mag: 1, run: false }]) {
+      const { peak } = turnTrial(t);
+      expect(peak, 'the body outran its own ceiling').toBeLessThan(MOVE.turnRate * 57.3 * 1.02);
+    }
+  });
+
+  it('finishes the turn with the travel, not half a second after it', () => {
+    // The tail is the whole complaint. An exponential never arrives, so he ran
+    // in a straight line for over a second with his body still visibly rotating.
+    // Measured before the floor went in: 1.35 s for a right angle, worst
+    // apparent pivot 38 ft. A check on the final facing alone passes on that.
+    const a = turnTrial({ x: 1, y: 0, mag: 1, run: false });
+    expect(a.arrive, 'a right angle should be done inside half a second').toBeLessThan(0.5);
+    expect(a.worstFt, 'still rotating on a straight line').toBeLessThan(14);
+    const b = turnTrial({ x: 0, y: 1, mag: 1, run: false });
+    expect(b.arrive, 'a reversal should be done inside a second').toBeLessThan(0.9);
+    // And it ARRIVES: after the turn there is no residual rotation at all.
+    expect(Math.abs(b.p.yawRate)).toBe(0);
+  });
+
+  it('a hard turn costs him speed, so the feet plant', () => {
+    // Without this he carries a full sprint round a hairpin, which has no read
+    // available to it except sliding -- and it is also what lets the
+    // turn-in-place clip appear, since that only blends in below a walk.
+    const p = new Player(M.spawn);
+    step(p, { x: 0, y: -1, mag: 1, run: false }, 0, 90);
+    const before = p.speed;
+    let lo = 99;
+    for (let i = 0; i < 90; i++) {
+      p.step(1 / 60, g, { x: 1, y: 0, mag: 1, run: false }, 0, false);
+      lo = Math.min(lo, p.speed);
+    }
+    expect(before).toBeGreaterThan(MOVE.run * 0.9);
+    expect(lo, 'a right angle at a full run cost him nothing').toBeLessThan(MOVE.walk * 1.1);
+    // and he is back up to speed once he is pointing the new way
+    expect(p.speed).toBeGreaterThan(MOVE.run * 0.9);
+  });
+
+  it('POSITIVE yawRate is a turn to his RIGHT', () => {
+    // Which clip plays hangs on this sign, and it is the argument that comes out
+    // backwards half the time in this account. Derived: bearings run north ->
+    // east -> south, which is clockwise seen from above, and clockwise from
+    // above while facing north is toward the east, which is his right hand.
+    // Checked here against his own right vector rather than against intuition.
+    for (const [sx, name] of [[1, 'right'], [-1, 'left']]) {
+      const p = new Player(M.spawn);
+      const fx0 = Math.sin(p.facing), fz0 = -Math.cos(p.facing);
+      const rx = -fz0, rz = fx0;                    // his right = forward x up
+      step(p, { x: sx, y: 0, mag: 1, run: false }, 0, 6);
+      const fx1 = Math.sin(p.facing), fz1 = -Math.cos(p.facing);
+      const toward = (fx1 - fx0) * rx + (fz1 - fz0) * rz;
+      expect(Math.sign(toward), `turning ${name}: his nose went the other way`).toBe(sx);
+      expect(Math.sign(p.yawRate), `turning ${name}: yawRate has the wrong sign`).toBe(sx);
+    }
+  });
+
   it('stays on the ground it is standing on', () => {
     const p = new Player(M.spawn);
     step(p, { x: 0, y: 0, mag: 0, run: false }, 0, 240);
@@ -313,6 +409,75 @@ describe('locomotion', () => {
     step(p, { x: 0, y: -1, mag: 1, run: true }, az, 60 * 6);
     const r = g.resolve(p.x, p.z, p.y, MOVE.radius * 0.9);
     expect(r[2], 'he ended up inside a building').toBe(false);
+  });
+});
+
+describe('the gait', () => {
+  // `animate` is a pure weight table over a stub mixer, so it needs no GLB and
+  // no GPU. What is under test is which clip is asked for and how much of it --
+  // the part that decides whether he steps a turn round or slides through it.
+  const rig = (names) => {
+    const actions = {};
+    for (const n of names) {
+      let w = 0, ts = 1;
+      actions[n] = { setEffectiveWeight: (v) => { w = v; }, getEffectiveWeight: () => w,
+                     setEffectiveTimeScale: (v) => { ts = v; }, get ts() { return ts; } };
+    }
+    actions.idle.setEffectiveWeight(1);
+    return { actions, mixer: { update() {} } };
+  };
+  const ALL = ['idle', 'walk', 'run', 'rise', 'fall', 'turnL', 'turnR'];
+  const settle = (c, opts, n = 40) => {
+    for (let i = 0; i < n; i++) animate(c, 1 / 60, opts.speed, true, 0, opts.yaw);
+    const w = {}; let sum = 0;
+    for (const k of ALL) { w[k] = c.actions[k].getEffectiveWeight(); sum += w[k]; }
+    return { w, sum };
+  };
+
+  it('never lets the weights drop below one, which would bleed the T-pose in', () => {
+    // A table that sums under 1 hands the remainder to the BIND POSE, and the
+    // bind pose is a T-pose. It reads as a broken model rather than as a leaked
+    // weight, which is why this is pinned rather than trusted.
+    for (const speed of [0, 1, MOVE.walk, 3, MOVE.run, MOVE.sprint])
+      for (const yaw of [0, 1, 3, 6, -6]) {
+        const { sum } = settle(rig(ALL), { speed, yaw });
+        expect(sum, `speed ${speed} yaw ${yaw}: weights summed to ${sum.toFixed(3)}`)
+          .toBeGreaterThan(0.98);
+        expect(sum).toBeLessThan(1.02);
+      }
+  });
+
+  it('steps a slow turn round rather than sliding through it', () => {
+    // The clip was sitting unwired in the export the whole time. Measured on the
+    // real player before the speed fade was fixed, it peaked at 0.19 -- present,
+    // and invisible, which is the same as absent.
+    const right = settle(rig(ALL), { speed: 1.2, yaw: 5.3 });
+    expect(right.w.turnR, 'turning right on the spot played no turn clip').toBeGreaterThan(0.6);
+    expect(right.w.turnL).toBe(0);
+    const left = settle(rig(ALL), { speed: 1.2, yaw: -5.3 });
+    expect(left.w.turnL, 'turning left played the RIGHT clip or none').toBeGreaterThan(0.6);
+    expect(left.w.turnR).toBe(0);
+  });
+
+  it('does not play a turn clip when there is nothing to turn', () => {
+    // Ask what this check would pass with: one that only looked for the clip
+    // appearing passes on a version that plays it constantly.
+    expect(settle(rig(ALL), { speed: 0, yaw: 0 }).w.turnR).toBe(0);
+    expect(settle(rig(ALL), { speed: MOVE.run, yaw: 0 }).w.turnR).toBe(0);
+    // and not at a run either, where the gait is already doing the turning
+    const fast = settle(rig(ALL), { speed: MOVE.run, yaw: 5.3 });
+    expect(fast.w.turnR + fast.w.turnL, 'a turn clip laid over a sprint').toBeLessThan(0.05);
+    expect(fast.w.run).toBeGreaterThan(0.9);
+  });
+
+  it('survives a rig with no turn clips at all', () => {
+    // Every other character file in this account is a different export, and a
+    // missing clip must degrade rather than throw or leak weight.
+    const c = rig(['idle', 'walk', 'run', 'rise', 'fall']);
+    let sum = 0;
+    for (let i = 0; i < 40; i++) animate(c, 1 / 60, 1.2, true, 0, 5.3);
+    for (const k of ['idle', 'walk', 'run']) sum += c.actions[k].getEffectiveWeight();
+    expect(sum).toBeGreaterThan(0.98);
   });
 });
 

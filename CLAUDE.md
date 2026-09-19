@@ -34,8 +34,9 @@ thumbs on glass. Branch as much as you like while working; **end on `main`**.
 Before pushing:
 
 ```sh
-npm test                 # 63 checks against the real baked city in data/
+npm test                 # 71 checks against the real baked city in data/
 npm run zoom             # proves the page refuses to double-tap and pinch zoom
+npm run thumbs           # drives the real pads and proves every verb is reachable
 node tools/shot.mjs      # boots the real page in a real Chromium and looks
 ```
 
@@ -66,6 +67,25 @@ that is not responding.
 
 It runs on a phone, in any orientation, with two thumbs. WASD and the arrow keys
 exist so it is debuggable on a laptop and that is all they are for.
+
+**And "with two thumbs" is checked, not asserted.** `npm run thumbs` presses the
+real pads in a real browser and watches the player. The jump shipped as
+`jump() { return keys.has(' ') }` — spacebar and nothing else — so on glass there
+was no jump at all, and nothing on screen said so. Reading the source proves a
+branch exists; it does not prove a gesture reaches it.
+
+Two things about that harness, both of which had it green and meaningless first:
+
+* **It has to press START.** `makeSticks()` lives inside `start()`, and `#boot`
+  is `z-index: 20` across the whole viewport until then — so a tap sent early
+  lands on the loading card. Every NEGATIVE case then passes because nothing
+  reaches the pad at all.
+* **It has to latch the jump in the PAGE, and land between cases.** Under
+  swiftshader this runs at about 10 fps, so polling every 16 ms is two frames:
+  the first version missed each jump inside its own window and caught it during
+  the *next* case, reporting the camera drag jumping and the tap not. And
+  `stepPlayer` only jumps when `grounded`, so a case run while he is still in
+  the air from the previous one cannot jump whatever the gesture was.
 
 ## What the city actually is
 
@@ -323,6 +343,70 @@ Landmines already paid for here:
   merely TOUCHED a clear box lost every shopfront in it — five hundred metres
   of signage gone because a bridge two streets away has an override.
 
+## Locomotion: the body, the travel and the clip have to agree
+
+*"He rotates around a point that's like five or ten feet behind him, so he does
+this weird sliding rotation."* That is one report with four causes, and none of
+them is in the rig — a 360° facing sweep puts his hips within **4 mm** of the
+player at every bearing, so there is no offset anywhere to find. The pivot is
+made entirely by rates disagreeing.
+
+**A rigid body whose yaw changes while its path stays straight has its
+instantaneous centre out at `|v| / omega`.** At a full run with the body still
+coming round at 100°/s, that is twelve feet. Measured on the shipped version:
+
+```
+                        peak      arrives   worst apparent pivot
+run, thumb swung 90°   281 deg/s   1.35 s        38 ft
+run, thumb reversed    562 deg/s   1.57 s        38 ft
+after                  304 deg/s   0.35 s         8 ft
+```
+
+The four causes, in the order they matter:
+
+* **`facing` was a bare exponential**, so it dumped most of the turn into the
+  first two frames — 1071°/s from a standstill, one and a half turns a second —
+  and then **never arrived**. The tail is the whole complaint: the velocity has
+  finished its turn, so he is running in a straight line while his body is still
+  visibly rotating. A CEILING kills the snap and a FLOOR is what makes it end;
+  the ease between them is only the shape.
+* **THE CEILING IS NOT A TASTE NUMBER: IT IS `turnAccel / run`.** The velocity
+  can be turned at `turnAccel` m/s², which is 5.3 rad/s at a full run. Give the
+  BODY that same ceiling and the two finish together by construction, and there
+  is nothing left over to make a pivot out of. It also lands where the turn clip
+  can sell it (`TURN.ref × TURN.hi` is 4.9), so one number answers the physics
+  and the animation at once.
+* **`turnBrake`** — a hard turn costs him speed, which is what plants the feet.
+  Without it he carried a full sprint round a hairpin.
+* **`plant`** — he pushes off where his FEET are pointing, not where the thumb
+  is. Nothing stopped him accelerating flat out in a direction his body was
+  nowhere near, which is a man travelling one way and pointing another.
+
+And then the fourth: **turning on the spot is a CLIP.** `turn_left` and
+`turn_right` were sitting in the export unwired the whole time, so the body came
+round with the feet planted however well the rate was limited. They are measured
+in-place before use (6.5 cm of hip sway across the clip, the same order as the
+idle's 1.6 cm) because this account has paid for a one-shot that travelled.
+
+**A weight that exists and cannot be seen is the same as no weight.** The first
+version peaked at **0.19** — the fade was pinned to walk speed while `plant`
+holds a turn at about 1.8 m/s, so the window it was allowed to appear in barely
+existed. It is full weight up to a walk and gone by `TURN.upTo` now, and what
+that is worth is measured rather than assumed:
+
+```
+standstill, 90° right   peak 0.87, visible for 26 frames
+full run, reversed      peak 0.80, 22 frames
+full run, 90°           peak 0.25, 0 frames   <- right: the gait is doing it
+walking straight        0                     <- and no false positives
+```
+
+**Ask what a check would still pass with.** "Does he end up facing the thumb"
+passes on every broken version here, because an exponential does get there
+eventually. What has to be pinned is WHEN, and at what rate, and with which
+clip — which is what the four `locomotion` and four `the gait` tests do. Three
+of them were verified by putting the old code back and watching them fail.
+
 ## LOD, and why `THREE.LOD` is used for exactly one thing
 
 There are three kinds of detail switch here and they need three different
@@ -418,6 +502,9 @@ you cross the same street, which is exactly what you do around a landmark.
   override has machinery and a test and no asset to prove it on.
 * **The play area is 5 km square.** `tools/city.py` moves it or grows it; the fetch
   and the bbox index are cached, so a bigger bake costs only its own row groups.
+* **No walk-backwards and no strafe.** He always turns to face where he is
+  going, which is right for a city and wrong the moment there is anything to
+  aim at.
 * **Colin has no idle variety, no jump animation blend-out, and no shadow.**
   There are no shadow maps at all — a projected shadow over a city this size is
   the most expensive thing that could be in here, and the vertical gradient

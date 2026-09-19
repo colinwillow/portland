@@ -1,8 +1,11 @@
 // Twin thumb sticks. Ported forward from the Joystick that went Robits -> Peggy
-// -> Big Don -> Shredworld, cut down to the two verbs this game has: the left
-// thumb walks, the right thumb looks. The flick detector, the shoot zone and the
-// tap gestures are deliberately NOT here -- they exist in those games because
-// something needed them, and an unused gesture is a way to fire the wrong verb.
+// -> Big Don -> Shredworld, cut down to the verbs this game has: the left thumb
+// walks, the right thumb looks, and a TAP on the right thumb jumps. The flick
+// detector and the shoot zone are deliberately NOT here -- they exist in those
+// games because something needed them, and an unused gesture is a way to fire
+// the wrong verb. The tap is here because a jump on the spacebar alone is a
+// verb that cannot be reached with two thumbs, which is this account's bar for
+// done and not a matter of taste.
 //
 // What IS kept is everything those repos paid for:
 //
@@ -18,6 +21,17 @@
 //    hold somebody is in the middle of -- is worse than the bug.
 
 const DEAD = 0.055;
+// A TAP ON THE RIGHT PAD IS THE JUMP, and it is a press AND a release: short,
+// and barely moved. Both halves are the gate, which is the lesson Shredworld
+// wrote up twice. Judged on the release alone every camera drag that happens to
+// end near the middle is a jump; judged on deflection alone a slow pan is one.
+//
+// `peak` IS A HIGH-WATER MARK FOR THE WHOLE TOUCH, never the deflection at the
+// moment of release -- a thumb can push out and come back between two frames at
+// 30 fps, and a per-frame sample misses it entirely. That latch is the one part
+// of the flick detector in the other games worth keeping here.
+const TAP_MS = 230;
+const TAP_MAX_PUSH = 0.30;   // deliberately under the camera's own 0.09 deadzone x 3
 
 export class Stick {
   constructor(zone, ring, knob, anchor) {
@@ -27,6 +41,7 @@ export class Stick {
     this.x = 0; this.y = 0; this.mag = 0;
     this.radius = 58;
     this.ox = 0; this.oy = 0;
+    this.downT = 0; this.peak = 0; this.tapped = false;
     this.park();
 
     zone.addEventListener('pointerdown', (e) => this.down(e), { passive: false });
@@ -36,7 +51,9 @@ export class Stick {
     // without `lostpointercapture` ever reaching us, and the up then lands
     // somewhere else entirely -- this is the net under that.
     addEventListener('pointerup', (e) => this.up(e), true);
-    addEventListener('pointercancel', (e) => this.up(e), true);
+    // A CANCEL IS NOT A TAP. The browser cancels a pointer when it takes the
+    // gesture for itself, and "the system stole your thumb" must not jump him.
+    addEventListener('pointercancel', (e) => { if (e.pointerId === this.id) this.release(); }, true);
     // Backgrounding the app with a thumb down delivers nothing on the way out
     // and nothing on the way back. This is the one that leaves a stick parked
     // at full deflection with no finger anywhere near it.
@@ -65,6 +82,8 @@ export class Stick {
     if (this.id !== null) return;
     e.preventDefault();
     this.id = e.pointerId;
+    this.downT = e.timeStamp || performance.now();
+    this.peak = 0;
     this.ox = e.clientX; this.oy = e.clientY;
     this.place(this.ox, this.oy, this.ox, this.oy, true);
     // setPointerCapture THROWS if the pointer has already gone, and calling it
@@ -82,10 +101,25 @@ export class Stick {
     this.x = dx / this.radius; this.y = dy / this.radius;
     const m = Math.hypot(this.x, this.y);
     this.mag = m < DEAD ? 0 : (m - DEAD) / (1 - DEAD);
+    if (m > this.peak) this.peak = m;
     this.place(this.ox, this.oy, this.ox + dx, this.oy + dy, true);
   }
 
-  up(e) { if (e.pointerId === this.id) this.release(); }
+  up(e) {
+    if (e.pointerId !== this.id) return;
+    // The RELEASE re-reads the travel, because a thumb can go out and come back
+    // inside one frame and `move` may never have seen the deflection that should
+    // have cancelled the tap.
+    const d = Math.hypot(e.clientX - this.ox, e.clientY - this.oy) / this.radius;
+    if (d > this.peak) this.peak = d;
+    const held = (e.timeStamp || performance.now()) - this.downT;
+    if (held < TAP_MS && this.peak < TAP_MAX_PUSH) this.tapped = true;
+    this.release();
+  }
+
+  // One-shot, cleared on read. The frame loop asks once a frame, and a tap that
+  // is not consumed is a jump that fires again next frame.
+  takeTap() { const t = this.tapped; this.tapped = false; return t; }
 
   release() {
     if (this.id === null) return;
@@ -125,6 +159,10 @@ export function makeSticks() {
       return { x: (keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0),
                y: (keys.has('arrowdown') ? 1 : 0) - (keys.has('arrowup') ? 1 : 0) };
     },
-    jump() { return keys.has(' '); },
+    // A TAP ON THE RIGHT PAD, or the spacebar on a laptop. It costs no new
+    // control: that pad's deflection is the camera and a tap has none, so the
+    // gesture was genuinely free. It is read here rather than latched in the
+    // frame loop so `takeTap` is consumed exactly once per frame.
+    jump() { return R.takeTap() || keys.has(' '); },
   };
 }

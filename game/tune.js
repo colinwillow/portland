@@ -51,6 +51,23 @@ export const SKY = {
 // a silhouette; this is the dial.
 export const CHAR = { emissive: 0.55, height: 1.78 };
 
+// Turning on the spot. A body that rotates with its feet planted is the
+// "sliding rotation" half of the same complaint, and `turn_left` / `turn_right`
+// were sitting unwired in the export the whole time. It only shows at a WALK or
+// slower -- at a run the gait already carries the turn, and a turn-in-place clip
+// laid over a sprint is two things happening at once.
+export const TURN = {
+  dead: 0.9,             // rad/s below which a turn is not worth a clip
+  full: 3.4,             // and where it is worth the whole of one
+  ref: 2.6,              // the rate the clip itself reads as; it is time-scaled
+  // The speed it has faded out entirely by. Pinned to the WALK first time and
+  // measured at a peak weight of 0.17, which is invisible: the turn brake bottoms
+  // a braked reversal out at 3 m/s, well over a walk, so the window the clip was
+  // allowed to appear in barely existed. This is a MEASUREMENT, not a taste.
+  upTo: 3.6,
+  lo: 0.55, hi: 1.9,     // and clamped, because a clip at 4x is a blur
+};
+
 export const CAM = {
   dist: 7.2, minDist: 2.6, hardMin: 0.85, maxDist: 16,
   // How much boom counts as "a shot", the extra pitch tried to find it, and the
@@ -68,8 +85,37 @@ export const CAM = {
 
 export const MOVE = {
   walk: 1.9, run: 6.4, sprint: 9.2,
-  accel: 26, decel: 30, turnAccel: 60,
-  faceHL: 0.09,          // how fast his body comes round to the thumb
+  accel: 26, decel: 30,
+  // HOW FAST THE VELOCITY MAY BE TURNED, and it has to agree with how fast the
+  // BODY turns or the difference between them reads as a slide. At 60 a full
+  // run changed direction in 0.17 s -- about six g sideways, a handbrake turn --
+  // while the body took half a second to catch up. 34 is a 90 deg turn at a
+  // full run in 0.30 s, against the body's 0.34, so the two arrive together.
+  turnAccel: 34,
+  // How much of his speed a turn costs: 0 straight on, all of it on a reversal.
+  // At 0.8 a right angle asks for 60% of top and a 180 for 20%, which is under
+  // a walk -- so a reversal is a thing he visibly does rather than a sprint with
+  // a new bearing on it.
+  turnBrake: 0.55,
+  // The least of his top speed he can have while facing the wrong way outright.
+  // He turns first and then goes, rather than sprinting sideways.
+  plant: 0.28,
+  // The body's yaw, and it takes all three. `faceHL` is the SHAPE, `turnRate`
+  // is the CEILING (without it the first frame of a reversal spins him at
+  // 1071 deg/s) and `turnMin` is the FLOOR -- an exponential never arrives, and
+  // the last few degrees crawling round while he runs in a straight line is
+  // precisely the rotation-about-a-point-behind-him.
+  //
+  // THE CEILING IS NOT A TASTE NUMBER: IT IS `turnAccel / run`. The velocity can
+  // be turned at `turnAccel` m/s^2, which at a speed v is v/turnAccel seconds per
+  // radian -- 5.3 rad/s at a full run. Give the BODY that same ceiling and the
+  // two finish together by construction, and there is no rotation left over with
+  // no change of direction under it, which is the whole illusion. It also lands
+  // where the turn clip can sell it (`TURN.ref` x `TURN.hi` is 4.9), so one
+  // number answers the physics and the animation at once.
+  faceHL: 0.07,          // how fast his body comes round to the thumb
+  turnRate: 5.3,         // rad/s, = turnAccel / run. 304 deg/s, a 90 deg in 0.3 s
+  turnMin: 2.6,          // rad/s floor, = TURN.ref: the clip's own natural rate
   g: 22,
   jump: 6.4,
   airControl: 0.35,

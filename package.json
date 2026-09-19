@@ -12,7 +12,8 @@
     "shot": "node tools/shot.mjs",
     "geo": "python3 tools/test_geo.py",
     "serve": "python3 -m http.server 8123",
-    "zoom": "node tools/zoom.mjs"
+    "zoom": "node tools/zoom.mjs",
+    "thumbs": "node tools/thumbs.mjs"
   },
   "devDependencies": {
     "@gltf-transform/core": "^4.5.0",

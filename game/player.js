@@ -26,6 +26,7 @@ export class Player {
     this.speed = 0;
     this.grounded = true;
     this.airT = 0;
+    this.yawRate = 0;        // signed, rad/s; + is a turn to his right
     this.swimming = false;
     this.wantRun = true;
     // Ghost is for looking at the city, not for playing it: no gravity, no
@@ -53,7 +54,7 @@ export class Player {
       this.z += (wz * MOVE.run * 2) * dt * mag;
       this.y += this.lift * dt;
       this.vx = this.vz = this.vy = 0;
-      this.speed = 0; this.grounded = false; this.swimming = false;
+      this.speed = 0; this.grounded = false; this.swimming = false; this.yawRate = 0;
       if (mag > 1e-4) this.facing = this.heading;
       return;
     }
@@ -62,14 +63,32 @@ export class Player {
       : mag < 0.55 ? MOVE.walk + (MOVE.run - MOVE.walk) * (mag / 0.55)
       : move.run ? MOVE.run + (MOVE.sprint - MOVE.run) * ((mag - 0.55) / 0.45)
       : MOVE.run;
-    const want = mag > 1e-4 ? top * Math.min(1, mag * 1.35) : 0;
-    const tx = wx * want, tz = wz * want;
-
-    // Split the correction against the way he is already going.
+    // Which way he is already going, so the correction can be split against it.
     const sp = Math.hypot(this.vx, this.vz);
     let hx = 0, hz = 0;
     if (sp > 0.05) { hx = this.vx / sp; hz = this.vz / sp; }
     else if (mag > 1e-4) { hx = wx; hz = wz; }
+
+    // A HARD TURN COSTS HIM SPEED, and that is what plants the feet. Every
+    // other game in this account has this and Portland did not: he carried a
+    // full sprint round a hairpin, and a body travelling flat out while
+    // rotating has no read available to it except sliding. It is also what
+    // lets the turn-in-place clip appear at all -- a reversal now drops him
+    // under a walk, which is where that clip takes over. There is no brake
+    // from a standstill, because `hx, hz` falls back to the thumb.
+    const dot = mag > 1e-4 ? wx * hx + wz * hz : 1;     // +1 straight on, -1 a reversal
+    const brake = 1 - MOVE.turnBrake * (1 - dot) * 0.5;
+    // AND HE PUSHES OFF WHERE HIS FEET ARE POINTING, NOT WHERE THE THUMB IS.
+    // This is Plutopia's `plant`, and its absence was the last quarter of the
+    // slide: nothing stopped him accelerating flat out in a direction his body
+    // was nowhere near, which is a man travelling one way and pointing another,
+    // which is the definition of the thing being complained about. It is also
+    // what gives the turn clip a window to exist in -- measured, the peak weight
+    // on a reversal from a standstill went 0.19 (invisible) to over half.
+    const face = mag > 1e-4 ? Math.cos(wrap(this.heading - this.facing)) : 1;
+    const plant = MOVE.plant + (1 - MOVE.plant) * Math.max(0, face);
+    const want = mag > 1e-4 ? top * Math.min(1, mag * 1.35) * brake * plant : 0;
+    const tx = wx * want, tz = wz * want;
     const dx = tx - this.vx, dz = tz - this.vz;
     const along = dx * hx + dz * hz;
     const acx = dx - along * hx, acz = dz - along * hz;
@@ -120,11 +139,47 @@ export class Player {
     }
 
     this.speed = Math.hypot(this.vx, this.vz);
-    const hl = MOVE.faceHL * (1 + Math.min(1, this.speed / MOVE.run) * 1.4);
+
+    // HOW THE BODY COMES ROUND, AND A BARE EXPONENTIAL IS NOT IT. This was
+    // three quarters of "he rotates about a point five or ten feet behind him
+    // and slides round it", and the measurement says why. An exponential puts
+    // most of the turn in the first two frames and then never arrives:
+    //
+    //   standstill, thumb swung a quarter turn   1071 deg/s on the opening frame
+    //   running, thumb reversed                   592 deg/s on the opening frame
+    //   and at t = 0.4 .. 0.7 s, STILL turning 118 -> 29 deg/s while the speed
+    //   sits flat at 6.4 and the velocity has long since finished its turn
+    //
+    // That tail is the whole complaint. The velocity's turn is done, so he is
+    // running in a STRAIGHT LINE while his body is visibly still rotating --
+    // and a body that rotates while translating straight is, exactly, a body
+    // rotating about a point off to one side of itself. There is no offset
+    // anywhere in the rig (a 360 deg sweep puts the hips within 4 mm of the
+    // player at every bearing); the pivot is made by the two rates disagreeing.
+    //
+    // So: a CEILING kills the snap, and a FLOOR is what makes it ARRIVE. The
+    // ease in between is still what gives it a shape. The ceiling is the SAME
+    // RATE the velocity turns at (see `MOVE.turnRate`), so the two finish
+    // together and nothing is left rotating on a straight line.
+    const err = wrap(this.heading - this.facing);
+    let d = 0;
     if (this.speed > 0.25 || mag > 1e-4) {
-      this.facing = this.facing + wrap(this.heading - this.facing) *
-        (1 - Math.pow(2, -dt / hl));
+      const cap = MOVE.turnRate * dt;
+      const floor = MOVE.turnMin * dt;
+      d = err * (1 - Math.pow(2, -dt / MOVE.faceHL));
+      if (Math.abs(d) < floor) d = Math.sign(err) * floor;
+      if (Math.abs(d) > cap) d = Math.sign(err) * cap;
+      // Arrive rather than overshoot: the floor is what would otherwise hunt
+      // back and forth across the heading for ever on a gentle curve.
+      if (Math.abs(err) <= Math.abs(d)) { d = err; this.facing = this.heading; }
+      else this.facing += d;
     }
+    // Signed yaw rate, rad/s, for the animation. POSITIVE IS A TURN TO HIS
+    // RIGHT: bearings run north -> east -> south, which is clockwise seen from
+    // above, and clockwise from above while facing north is toward the east,
+    // which is his right hand. Derived rather than eyeballed, and pinned by a
+    // test -- this is the argument that comes out backwards half the time.
+    this.yawRate = dt > 0 ? d / dt : 0;
   }
 }
 
