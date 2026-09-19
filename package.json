@@ -1,0 +1,24 @@
+{
+  "name": "portland",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "A walkable Portland, procedurally built from open map data.",
+  "scripts": {
+    "test": "vitest run",
+    "fetch": "python3 tools/fetch_city.py",
+    "bake": "python3 tools/bake.py",
+    "map": "python3 tools/preview.py 1600 /tmp/pdx-map.png",
+    "shot": "node tools/shot.mjs",
+    "geo": "python3 tools/test_geo.py",
+    "serve": "python3 -m http.server 8123"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
+    "playwright-core": "^1.52.0",
+    "three": "^0.171.0",
+    "vitest": "^3.1.0"
+  }
+}

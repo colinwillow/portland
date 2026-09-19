@@ -1,0 +1,54 @@
+# Deploy the repo root to GitHub Pages.
+#
+# THERE IS NOTHING TO BUILD. index.html opens and runs -- native ES modules, a
+# vendored three, and the baked city committed under data/ -- so this workflow
+# runs the checks and uploads the tree as it stands. That is the whole reason
+# the city was moved out of a Vite project: what Pages serves is byte for byte
+# what is in the repo, and there is no dist/ for the two to disagree about.
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  # Queue deploys rather than cancelling one mid-flight.
+  cancel-in-progress: false
+
+# Build and deploy are separate jobs on purpose. With both in one job,
+# "Re-run failed jobs" after a deploy failure re-runs the upload too, and the
+# run then holds two artifacts named github-pages -- which deploy-pages refuses
+# with "Multiple artifacts named github-pages were unexpectedly found".
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # 63 checks against the REAL baked city in data/, which is committed --
+      # so a bad bake cannot reach a phone without failing here first.
+      - run: npx vitest run
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

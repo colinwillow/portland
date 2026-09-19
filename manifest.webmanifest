@@ -1,0 +1,12 @@
+{
+  "name": "Portland",
+  "short_name": "Portland",
+  "description": "A walkable, procedurally built Portland from open map data.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0f1621",
+  "theme_color": "#0f1621",
+  "icons": []
+}

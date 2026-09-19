@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- A PHONE HAS NO CONSOLE, SO AN EXCEPTION IS A BLANK SCREEN AND NOTHING ELSE.
+     Borrowed wholesale from the city repo, which spent five builds discovering that
+     "stuck on the loading screen" is three different bugs wearing one face: a module that
+     threw, a fetch that never settled, and a tab the OS killed. This is FIRST in the head,
+     before the import map and before the module, because an error the trap is not installed
+     for is an error nobody sees -- and that includes a module that fails to PARSE. The
+     listener uses CAPTURE so a subresource that 404s (which fires at its element, not at
+     window) is caught too. The text is monospaced and selectable: the point is to read it
+     out or copy it. -->
+<script>
+(function () {
+  var q = [], el = null;
+  function paint() {
+    if (!q.length) return;
+    if (!el) { el = document.getElementById('crash'); if (!el) return; }
+    el.textContent = q.join('\n'); el.className = 'on';
+  }
+  function note(s) { if (q.length < 8) q.push(String(s)); paint(); }
+  window.addEventListener('error', function (e) {
+    if (e && e.message) note(e.message + '  @' + String(e.filename || '').split('/').pop() + ':' + e.lineno);
+    else if (e && e.target && e.target.src) note('did not load: ' + String(e.target.src).split('/').pop());
+  }, true);
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e && e.reason; note('unhandled: ' + ((r && (r.message || r)) || '?'));
+  });
+  document.addEventListener('DOMContentLoaded', paint);
+  window.__crash = note;
+})();
+</script>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Portland</title>
+<link rel="manifest" href="manifest.webmanifest">
+<!-- One condensed face, for the HUD and for the shop signs. Condensed is the
+     point: a business name has to fit inside a two-metre board and still be
+     readable from across the street. `display=swap` so a font on a slow
+     connection can never hold the first paint -- a sign in the fallback face is
+     a sign, and a blank first frame is not. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<!-- LOADED WITHOUT BLOCKING. A plain stylesheet link in the head blocks the
+     first paint on a third-party host: on a slow or filtered connection the boot
+     card does not appear at all until the font resolves or times out, which is
+     the one failure mode a loading screen exists to prevent. Preload, then
+     promote to a stylesheet once it has arrived. -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap"
+      onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap"></noscript>
+<!-- An inline favicon: without one every load is a 404 in the console, which is
+     one more line of noise between a real error and whoever is reading. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230f1621'/%3E%3Cpath d='M4 24h24M8 24V12l6-4 6 4v12' stroke='%23ffb24a' stroke-width='2.5' fill='none'/%3E%3C/svg%3E">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Portland">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f1621">
+<style>
+  /* touch-action:manipulation is what actually kills iOS double-tap zoom; the viewport meta
+     has been ignored for that since iOS 10. The canvas takes `none` so a drag is never a
+     scroll. Neither covers Safari's own two-finger `gesturestart`, which main.js swallows. */
+  :root{
+    --ui:'Barlow Condensed','Arial Narrow',system-ui,-apple-system,sans-serif;
+    --ink:#f2ece0; --dim:rgba(242,236,224,.62); --rim:rgba(255,255,255,.34);
+    --hot:#ffb24a;
+  }
+  html,body{margin:0;height:100%;background:#0f1621;overflow:hidden;overscroll-behavior:none;
+    touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+    font-family:var(--ui);color:var(--ink)}
+  canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
+
+  /* ---- boot ---- */
+  #boot{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:14px;background:linear-gradient(170deg,#1b2740,#0f1621 60%,#141a17);
+    transition:opacity .6s ease}
+  #boot.gone{opacity:0;pointer-events:none}
+  #boot h1{margin:0;font-size:min(13vw,74px);letter-spacing:.06em;font-weight:700;
+    text-transform:uppercase;color:var(--ink);text-shadow:0 4px 0 rgba(0,0,0,.35)}
+  #boot .sub{margin-top:-10px;font-size:15px;letter-spacing:.34em;text-transform:uppercase;color:var(--dim)}
+  #bar{width:min(62vw,340px);height:5px;border-radius:3px;background:rgba(255,255,255,.14);overflow:hidden}
+  #barFill{height:100%;width:0;background:var(--hot);transition:width .25s ease}
+  #bootMsg{font-size:14px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);min-height:1.2em}
+  #startB{margin-top:6px;padding:13px 30px;border:0;border-radius:11px;background:var(--hot);
+    color:#20160a;font-family:var(--ui);font-weight:700;font-size:21px;letter-spacing:.14em;
+    text-transform:uppercase;box-shadow:0 5px 0 #a8692a;opacity:0;pointer-events:none;transition:opacity .3s}
+  #startB.on{opacity:1;pointer-events:auto}
+  #startB:active{transform:translateY(3px);box-shadow:0 2px 0 #a8692a}
+
+  /* ---- hud ---- */
+  #chip{position:fixed;top:calc(10px + env(safe-area-inset-top));left:calc(12px + env(safe-area-inset-left));
+    z-index:4;font-size:13px;letter-spacing:.04em;color:var(--dim);pointer-events:none;
+    text-shadow:0 1px 2px rgba(0,0,0,.7);max-width:calc(100vw - 150px);line-height:1.35}
+  #chip b{color:var(--hot);font-size:17px;font-weight:700;letter-spacing:.06em}
+  #where{position:fixed;bottom:calc(12px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);
+    z-index:4;font-size:14px;letter-spacing:.14em;text-transform:uppercase;color:var(--dim);
+    pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.8);transition:opacity .5s;text-align:center}
+  .key{position:fixed;z-index:6;top:calc(10px + env(safe-area-inset-top));
+    height:34px;min-width:34px;padding:0 10px;border:1px solid var(--rim);border-radius:9px;
+    background:rgba(18,24,34,.62);color:var(--ink);font-family:var(--ui);font-size:13px;
+    letter-spacing:.09em;text-transform:uppercase;display:flex;align-items:center;justify-content:center;
+    -webkit-backdrop-filter:blur(5px);backdrop-filter:blur(5px)}
+  .key:active{transform:translateY(1px);background:rgba(40,52,70,.8)}
+  #kMap{right:calc(12px + env(safe-area-inset-right))}
+  #kLook{right:calc(62px + env(safe-area-inset-right))}
+  #kDbg{right:calc(124px + env(safe-area-inset-right))}
+
+  /* ---- sticks ----
+     They are DRAWN AT REST, dim, rather than invisible until touched. An invisible control
+     is indistinguishable from a broken one: there is no way to learn it exists, never mind
+     where. The zone is a big invisible half-screen; the ring is only where the thumb landed. */
+  .zone{position:fixed;bottom:0;height:56%;z-index:3;touch-action:none}
+  #zL{left:0;width:50%} #zR{right:0;width:50%}
+  .ring,.knob{position:fixed;z-index:3;border-radius:50%;pointer-events:none;
+    transition:opacity .22s ease}
+  .ring{width:118px;height:118px;margin:-59px 0 0 -59px;border:2px solid rgba(255,255,255,.26);
+    background:rgba(255,255,255,.05)}
+  .knob{width:50px;height:50px;margin:-25px 0 0 -25px;background:rgba(255,255,255,.34);
+    border:2px solid rgba(255,255,255,.5)}
+  .rest{opacity:.4} .live{opacity:.95}
+  #hint{position:fixed;bottom:calc(120px + env(safe-area-inset-bottom));left:0;right:0;z-index:4;
+    text-align:center;font-size:13px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim);
+    pointer-events:none;transition:opacity .8s}
+
+  /* ---- map ---- */
+  #mapWrap{position:fixed;inset:0;z-index:12;display:none;align-items:center;justify-content:center;
+    background:rgba(8,12,18,.82)}
+  #mapWrap.on{display:flex}
+  #map{max-width:94vw;max-height:80vh;border-radius:10px;border:1px solid var(--rim);
+    image-rendering:auto;background:#1b2231}
+  #mapHint{position:fixed;bottom:calc(20px + env(safe-area-inset-bottom));left:0;right:0;text-align:center;
+    z-index:13;font-size:13px;letter-spacing:.2em;text-transform:uppercase;color:var(--dim)}
+
+  /* ---- crash ---- */
+  #crash{position:fixed;inset:0;z-index:999;display:none;padding:18px;box-sizing:border-box;
+    background:rgba(10,4,4,.94);color:#ffd9d9;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;
+    white-space:pre-wrap;overflow:auto;-webkit-user-select:text;user-select:text}
+  #crash.on{display:block}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="chip"></div>
+<div id="where"></div>
+<button class="key" id="kDbg" title="render debug">DBG</button>
+<button class="key" id="kLook" title="camera pitch">EYE</button>
+<button class="key" id="kMap" title="map">MAP</button>
+
+<div class="zone" id="zL"></div>
+<div class="zone" id="zR"></div>
+<div class="ring rest" id="ringL"></div><div class="knob rest" id="knobL"></div>
+<div class="ring rest" id="ringR"></div><div class="knob rest" id="knobR"></div>
+<div id="hint">left thumb walks &nbsp;·&nbsp; right thumb looks</div>
+
+<div id="mapWrap"><canvas id="map"></canvas></div>
+<div id="mapHint" style="display:none">tap anywhere to close</div>
+
+<div id="boot">
+  <h1>Portland</h1>
+  <div class="sub">procedural · open data</div>
+  <div id="bar"><div id="barFill"></div></div>
+  <div id="bootMsg">loading the city</div>
+  <button id="startB">Drop in</button>
+</div>
+
+<div id="crash"></div>
+
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+<script type="module" src="./game/main.js"></script>
+</body>
+</html>
