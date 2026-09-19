@@ -410,18 +410,33 @@ describe('locomotion', () => {
     expect(air).toBeLessThan(1.5);
   });
 
-  it('only jumps off the ground', () => {
-    // Holding the pad down must not be a ladder. Ask what a check on the apex
-    // alone would pass with: a version that jumps again every airborne frame.
+  it('gives him two jumps and not a ladder', () => {
+    // Held every frame, which is the worst case and what a keyboard does. Ask
+    // what a check on the apex alone would pass with: a version that jumps
+    // again on every airborne frame climbs out of the world.
     const p = new Player(M.spawn);
     step(p, { x: 0, y: 0, mag: 0, run: false }, 0, 120);
     const y0 = p.y;
-    let apex = 0;
+    let apex = 0, most = 0;
     for (let i = 0; i < 300; i++) {
-      p.step(1 / 60, g, { x: 0, y: 0, mag: 0, run: false }, 0, true);   // held, every frame
-      apex = Math.max(apex, p.y - y0);
+      p.step(1 / 60, g, { x: 0, y: 0, mag: 0, run: false }, 0, true);
+      apex = Math.max(apex, p.y - y0); most = Math.max(most, p.jumps);
     }
-    expect(apex, 'a held jump climbed for ever').toBeLessThan(5.4);
+    expect(most, 'he got a third jump').toBe(MOVE.jumps);
+    expect(apex, 'a held jump climbed for ever').toBeLessThan(10);
+  });
+
+  it('does not hand a second jump to somebody who walked off a roof', () => {
+    // The air jump exists only if he spent the first one. Without that gate,
+    // stepping off a ledge is a free save rather than a fall -- and `coyote`
+    // already covers the tenth of a second where it should still be a jump.
+    const p = new Player(M.spawn);
+    step(p, { x: 0, y: 0, mag: 0, run: false }, 0, 120);
+    p.grounded = false; p.airT = MOVE.coyote + 0.1; p.jumps = 0;   // walked off
+    const vy = p.vy;
+    p.step(1 / 60, g, { x: 0, y: 0, mag: 0, run: false }, 0, true);
+    expect(p.jumps, 'a fall granted an air jump').toBe(0);
+    expect(p.vy, 'he jumped out of a fall').toBeLessThan(vy);
   });
 
   it('stays on the ground it is standing on', () => {

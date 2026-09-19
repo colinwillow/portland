@@ -27,6 +27,7 @@ export class Player {
     this.grounded = true;
     this.airT = 0;
     this.yawRate = 0;        // signed, rad/s; + is a turn to his right
+    this.jumps = 0;          // spent since he last touched the ground
     this.swimming = false;
     this.wantRun = true;
     // Ghost is for looking at the city, not for playing it: no gravity, no
@@ -97,8 +98,24 @@ export class Player {
     this.vx += clampTo(along * hx, rate * dt) + clampTo(acx, turn * dt);
     this.vz += clampTo(along * hz, rate * dt) + clampTo(acz, turn * dt);
 
-    if (this.grounded && jump && !this.swimming) {
-      this.vy = MOVE.jump; this.grounded = false; this.airT = 0;
+    // ONE IN THE AIR, AND `jumps > 0` IS THE GATE. Walking off a kerb grants
+    // nothing -- the second jump exists only if he actually spent the first, so
+    // stepping off a roof is a fall and not a free save. `coyote` still covers
+    // the first for a tenth of a second after the ground goes.
+    //
+    // THE KICK IS SET, NEVER ADDED. Adding to whatever he had sends a double off
+    // the top of the first into orbit and one taken late in a fall nowhere at
+    // all; setting it makes the air jump the same height whenever it is spent,
+    // which is what makes it a save you can rely on.
+    //
+    // And it is deliberately WEAKER than the first, so the first stays a
+    // decision rather than half of a move you always do twice.
+    if (jump && !this.swimming) {
+      if (this.grounded) {
+        this.vy = MOVE.jump; this.grounded = false; this.airT = 0; this.jumps = 1;
+      } else if (this.jumps > 0 && this.jumps < MOVE.jumps) {
+        this.vy = MOVE.jump * MOVE.second; this.jumps++;
+      }
     }
     this.vy -= MOVE.g * dt;
     if (this.swimming) this.vy = Math.max(this.vy, -1.2);
@@ -129,10 +146,10 @@ export class Player {
     if (this.y <= floor + 0.02) {
       this.y = floor;
       if (this.vy < 0) this.vy = 0;
-      this.grounded = true; this.airT = 0;
+      this.grounded = true; this.airT = 0; this.jumps = 0;
     } else if (this.y - floor < MOVE.step && this.vy <= 0.01) {
       this.y = floor;                       // step up a kerb rather than collide
-      this.vy = 0; this.grounded = true; this.airT = 0;
+      this.vy = 0; this.grounded = true; this.airT = 0; this.jumps = 0;
     } else {
       this.airT += dt;
       if (this.airT > MOVE.coyote) this.grounded = false;

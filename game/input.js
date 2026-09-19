@@ -139,6 +139,7 @@ export function makeSticks() {
   // Keyboard is here so this is debuggable on a laptop, and that is ALL it is
   // for. The bar for done is two thumbs on a phone.
   const keys = new Set();
+  let spaceWas = false;
   addEventListener('keydown', (e) => keys.add(e.key.toLowerCase()));
   addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
   return {
@@ -163,6 +164,18 @@ export function makeSticks() {
     // control: that pad's deflection is the camera and a tap has none, so the
     // gesture was genuinely free. It is read here rather than latched in the
     // frame loop so `takeTap` is consumed exactly once per frame.
-    jump() { return R.takeTap() || keys.has(' '); },
+    jump() {
+      // THE SPACEBAR HAS TO BE AN EDGE, not a state. A held key reads true every
+      // frame, which with a second jump in the air means both are spent on
+      // consecutive frames and the double is gone before the thumb knows it
+      // exists. The pad is already a discrete tap; this is the keyboard catching
+      // up. Both sides are read before the `||` so the latch cannot be skipped
+      // by the short circuit.
+      const tap = R.takeTap();
+      const sp = keys.has(' ');
+      const edge = sp && !spaceWas;
+      spaceWas = sp;
+      return tap || edge;
+    },
   };
 }

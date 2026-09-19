@@ -134,6 +134,12 @@ export const MOVE = {
   // one variable at a time, which is the rule the badge toggles are built on --
   // so if the hang reads floaty, gravity is the one number to move.
   jump: 14.4,
+  jumps: 2,              // how many before he has to touch the ground again
+  // And what the air one is worth. 0.85 puts its own apex at 3.4 m, and taken at
+  // the top of the first it reaches about 8 m -- which is a quarter of the
+  // buildings round the spawn rather than a seventh, so it is worth having
+  // rather than worth having twice.
+  second: 0.85,
   airControl: 0.35,
   radius: 0.42,          // his collision cylinder
   eye: 1.72,
