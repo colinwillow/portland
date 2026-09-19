@@ -40,28 +40,53 @@ npm run thumbs           # drives the real pads and proves every verb is reachab
 node tools/shot.mjs      # boots the real page in a real Chromium and looks
 ```
 
-**No zooming, and it takes three separate guards.** Every browser gesture is
-something a thumb does by accident on a twin-stick game, and only one of the
-three is the viewport meta:
+**No zooming, and `touch-action` IS NOT THE FIX FOR DOUBLE TAP.** That was
+written down here as settled for four builds and it was wrong on the only
+device that counts. Everything the old note called for was in place — the
+viewport meta with `maximum-scale=1, user-scalable=no`, `touch-action:
+manipulation` on `html` and `body`, `none` on the canvas and on both stick
+zones, every gesture event cancelled — and **the phone still zoomed on a double
+tap.** Safari decides that gesture off the touch stream, so the touch stream is
+where it has to be refused:
 
-* **double-tap zoom** — `touch-action` in the CSS. iOS Safari has IGNORED
-  `user-scalable=no` since iOS 10, so the meta tag is not the fix and never
-  was. It has to be on the ROOT, not only on the canvas: `touch-action` is not
-  inherited, but the browser intersects the values from the hit element up
-  through its ancestors, so `none` on `html, body` covers everything that does
-  not override it — and a double tap landing on the HUD rather than the canvas
-  is covered too. Two games in this account had it on the canvas alone and
-  zoomed on every miss.
+* **double-tap zoom** — **cancel the second `touchend`.** Within 400 ms *and*
+  within 40 px of the first, because two deliberate taps in different places
+  are two taps and a game gets those constantly. A real control (`button`, `a`,
+  an input) is let through: `preventDefault` there cancels the synthesised
+  click, and Safari does not zoom on a target it already treats as interactive,
+  so a button loses its second press by being guarded and loses nothing by
+  being exempt. The sticks are unaffected either way — they run on POINTER
+  events, which are not the compatibility layer this cancels.
 * **pinch zoom** — its own non-standard event family. `gesturestart` /
   `gesturechange` / `gestureend` fire for two fingers and zoom whatever the CSS
-  says; `touch-action` does not cover them. **All three, not just the first.**
+  says. **All three, on the document as well as the window, with CAPTURE** —
+  they are dispatched at the element, and a listener that only sees them
+  bubbling back up can be stopped before it ever runs.
 * **`dblclick`** — belt and braces for a trackpad.
+* **The page is PINNED** (`position: fixed; inset: 0`), not merely
+  `overflow: hidden`. On iOS that alone still lets a drag rubber-band the
+  document and leaves the canvas off-centre, and a page that cannot be scrolled
+  is a page with less for a stray gesture to act on.
+
+`touch-action` stays — it is right on Android and costs nothing — but it is no
+longer what anything is *checked* against. **`npm run zoom` used to accept the
+CSS property as proof, which is how it reported this page fine while the phone
+zoomed.** It sends a real touch stream now and asks whether the page's own guard
+refused the second tap, which is this page's code and therefore something
+Chromium can honestly answer. It also checks two taps far apart are BOTH kept —
+a guard that eats every tap is a guard that breaks the game it protects.
 
 **The guard is its own `<script>` in the HEAD, beside the crash trap, and
 deliberately not in a module.** One that installs when the game finishes
 loading is absent for the whole of the loading screen, and absent entirely if
 the module throws — which is exactly when somebody starts jabbing at a page
 that is not responding.
+
+**And a harness that cannot reach the failing platform has to say so.** There
+is no iOS here. `npm run zoom` runs Chromium, so what it can honestly test is
+whether *our own* guard fires — never whether Safari would have zoomed anyway.
+Anything that reads as "the browser's behaviour" rather than "our listener" is
+outside what any check in this repo can see, and belongs on the phone.
 
 ## The bar for done
 

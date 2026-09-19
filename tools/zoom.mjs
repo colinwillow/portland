@@ -6,6 +6,15 @@
 // mechanisms have to be off and only one of them is the viewport meta, so
 // "did somebody remember" is not a question to answer by reading.
 //
+// WHAT THIS CANNOT SEE IS IOS, AND THAT MATTERS MORE THAN WHAT IT CAN.
+// It runs Chromium. For four builds it reported this page as fine on the
+// strength of `touch-action: manipulation`, which is the documented fix, reads
+// correctly everywhere, and does NOT stop iOS Safari zooming on a double tap --
+// so "ok" here and "it still zooms" on the phone were both true at once. It no
+// longer accepts a CSS property as proof of anything: it sends a real touch
+// stream and asks whether the page's own guard refused the second tap, which is
+// this page's code and is therefore something Chromium can honestly answer.
+//
 // THIS FIRES THE EVENTS AND ASKS WHETHER THE DEFAULT WAS CANCELLED. Grepping
 // the source for a listener proves a listener exists; it does not prove it is
 // reached. Run across ten repos it found two where it was not: one guarding
@@ -60,7 +69,7 @@ for (const repo of (process.argv.slice(2).length ? process.argv.slice(2) : ['.']
   await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(700);
 
-  const r = await page.evaluate(() => {
+  const r = await page.evaluate(async () => {
     const fire = (type) => {
       // Safari's gesture events do not exist in Chromium, so they are
       // constructed directly -- the listener is registered by NAME and does not
@@ -69,18 +78,47 @@ for (const repo of (process.argv.slice(2).length ? process.argv.slice(2) : ['.']
       document.body.dispatchEvent(e);
       return e.defaultPrevented;
     };
+    // A REAL DOUBLE TAP, as a touch stream. `touch-action: manipulation` was
+    // what this used to accept as proof and it is not proof: it is the
+    // documented answer, it reads correctly in every browser, and iOS Safari
+    // zooms anyway. What has to be there is a guard that CANCELS the second
+    // touchend, and that is this page's own code, so Chromium can check it.
+    const tap = (x, y, el) => {
+      const mk = (type, list) => {
+        const t = new Touch({ identifier: 1, target: el, clientX: x, clientY: y });
+        return el.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
+          touches: list ? [t] : [], targetTouches: list ? [t] : [], changedTouches: [t] }));
+      };
+      mk('touchstart', true);
+      const notCancelled = mk('touchend', false);
+      return !notCancelled;
+    };
+    const mid = document.elementFromPoint(innerWidth / 2, innerHeight / 3) || document.body;
+    tap(innerWidth / 2, innerHeight / 3, mid);            // first tap: allowed
+    const second = tap(innerWidth / 2, innerHeight / 3, mid);   // second: must be refused
+    await new Promise((r) => setTimeout(r, 600));
+    // and two taps far apart, in quick succession, must BOTH be allowed -- a
+    // guard that eats every tap is a guard that breaks the game it protects.
+    tap(40, 40, document.body);
+    const apart = tap(innerWidth - 40, innerHeight - 40, document.body);
+
     const ta = (el) => getComputedStyle(el).touchAction;
     return { gesturestart: fire('gesturestart'), gesturechange: fire('gesturechange'),
              gestureend: fire('gestureend'), dblclick: fire('dblclick'),
+             doubleTapRefused: second, farTapKept: !apart,
              html: ta(document.documentElement), body: ta(document.body),
              viewport: (document.querySelector('meta[name=viewport]') || {}).content || '' };
   });
   const pinch = r.gesturestart && r.gesturechange && r.gestureend;
-  const noDouble = r.dblclick || /^(none|manipulation)$/.test(r.body);
-  const ok = pinch && noDouble;
+  // NOT `touch-action`, and that change is the whole point of this build. See
+  // the comment block in index.html: every one of those was in place and the
+  // phone still zoomed.
+  const noDouble = r.doubleTapRefused;
+  const ok = pinch && noDouble && r.farTapKept;
   if (!ok) bad++;
-  console.log(`${ok ? 'ok  ' : 'FAIL'} ${repo.padEnd(11)} start:${r.gesturestart?'y':'N'} change:${r.gesturechange?'y':'N'} end:${r.gestureend?'y':'N'} dbl:${r.dblclick?'y':'N'}  ` +
-    `double-tap:${noDouble ? 'blocked' : 'ZOOMS'}  body.touch-action:${r.body}` +
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${repo.padEnd(11)} pinch:${pinch?'y':'N'} dbl:${r.dblclick?'y':'N'}  ` +
+    `double-tap:${noDouble ? 'refused' : 'ZOOMS'}  taps-apart:${r.farTapKept ? 'kept' : 'EATEN'}  ` +
+    `body.touch-action:${r.body}` +
     (errs.length ? `  pageerror: ${errs[0].slice(0, 60)}` : ''));
   await page.close(); server.close();
 }

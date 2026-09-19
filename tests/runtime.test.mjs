@@ -387,6 +387,43 @@ describe('locomotion', () => {
     }
   });
 
+  it('jumps high enough to land on something', () => {
+    // PINNED IN METRES, NEVER AS THE CONSTANT. `MOVE.jump` is a speed, and a
+    // check that it equals 14.4 passes on any gravity at all -- including one
+    // that makes the apex a foot. It shipped at 6.4, which is an apex of 0.88 m
+    // against this `g`, and the lowest roof in 1844 buildings around the spawn
+    // is 2.2 m: there was literally nothing in the city he could get onto.
+    const p = new Player(M.spawn);
+    step(p, { x: 0, y: 0, mag: 0, run: false }, 0, 120);
+    const y0 = p.y;
+    p.step(1 / 60, g, { x: 0, y: 0, mag: 0, run: false }, 0, true);
+    let apex = 0, air = 0;
+    for (let i = 0; i < 300; i++) {
+      p.step(1 / 60, g, { x: 0, y: 0, mag: 0, run: false }, 0, false);
+      apex = Math.max(apex, p.y - y0); air += 1 / 60;
+      if (p.grounded && i > 3) break;
+    }
+    expect(apex, 'he cannot reach the lowest roof in the city').toBeGreaterThan(4.2);
+    expect(apex, 'that is not a jump, that is low gravity').toBeLessThan(5.4);
+    // and he comes back down: a hang past about a second and a half stops
+    // reading as a jump whatever the height is.
+    expect(air).toBeLessThan(1.5);
+  });
+
+  it('only jumps off the ground', () => {
+    // Holding the pad down must not be a ladder. Ask what a check on the apex
+    // alone would pass with: a version that jumps again every airborne frame.
+    const p = new Player(M.spawn);
+    step(p, { x: 0, y: 0, mag: 0, run: false }, 0, 120);
+    const y0 = p.y;
+    let apex = 0;
+    for (let i = 0; i < 300; i++) {
+      p.step(1 / 60, g, { x: 0, y: 0, mag: 0, run: false }, 0, true);   // held, every frame
+      apex = Math.max(apex, p.y - y0);
+    }
+    expect(apex, 'a held jump climbed for ever').toBeLessThan(5.4);
+  });
+
   it('stays on the ground it is standing on', () => {
     const p = new Player(M.spawn);
     step(p, { x: 0, y: 0, mag: 0, run: false }, 0, 240);

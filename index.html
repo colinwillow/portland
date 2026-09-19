@@ -38,14 +38,25 @@
      THREE DIFFERENT MECHANISMS HAVE TO BE TURNED OFF AND ONLY ONE OF THEM IS
      THE VIEWPORT META:
 
-       double-tap zoom  `touch-action` in the CSS. iOS Safari has IGNORED
-                        `user-scalable=no` since iOS 10 -- it is honoured on
-                        Android and nowhere else that matters, so the meta tag
-                        is not the fix and never was.
+       double-tap zoom  CANCELLING THE SECOND `touchend`. This is the one that
+                        matters and the one this page got wrong for four builds.
+                        `touch-action: manipulation` is the documented answer and
+                        on iOS Safari it is NOT SUFFICIENT: it was on `html` and
+                        `body`, `none` on the canvas and on both stick zones, the
+                        viewport meta carried `maximum-scale=1, user-scalable=no`,
+                        every gesture event was cancelled -- and the phone still
+                        zoomed on a double tap. Safari decides that gesture off
+                        the touch stream, so the touch stream is where it has to
+                        be refused. The viewport meta stays because Android
+                        honours it; iOS has ignored `user-scalable=no` since iOS
+                        10 and ignores `maximum-scale` with it.
        PINCH zoom       its own non-standard event family. `gesturestart` /
                         `gesturechange` / `gestureend` fire for two fingers and
                         zoom the page whatever the CSS says; `touch-action`
-                        does not cover them.
+                        does not cover them. Bound on the DOCUMENT as well as the
+                        window, and with CAPTURE, because they are dispatched at
+                        the element and a listener that only sees them on the way
+                        back up can be stopped before it ever runs.
        desktop          `dblclick`, belt and braces for a trackpad.
 
      FIRST IN THE HEAD, with the crash trap, and deliberately not in a module:
@@ -53,8 +64,37 @@
      absent for the whole of the loading screen -- and missing entirely if the
      module throws, which is exactly when somebody starts jabbing at it. -->
 <script>
-for (var i = 0, G = ['gesturestart', 'gesturechange', 'gestureend', 'dblclick']; i < G.length; i++)
-  addEventListener(G[i], function (e) { e.preventDefault(); }, { passive: false });
+(function () {
+  var G = ['gesturestart', 'gesturechange', 'gestureend', 'dblclick'];
+  var stop = function (e) { e.preventDefault(); };
+  for (var i = 0; i < G.length; i++) {
+    addEventListener(G[i], stop, { passive: false, capture: true });
+    document.addEventListener(G[i], stop, { passive: false, capture: true });
+  }
+
+  // THE SECOND TAP OF A DOUBLE TAP DOES NOT GET ITS DEFAULT.
+  //
+  // Position as well as time, because two deliberate taps in different places
+  // are two taps -- jabbing at a control twice in a third of a second is
+  // something a thumb does constantly in a game and must not be swallowed.
+  //
+  // A REAL CONTROL IS LET THROUGH. `preventDefault` here cancels the synthesised
+  // click, and Safari does not zoom on a tap target it already treats as
+  // interactive, so a button loses nothing by being exempt and would lose its
+  // second press by not being. The sticks are unaffected either way: they are
+  // driven by POINTER events, which are not the compatibility layer this cancels.
+  var lt = 0, lx = 0, ly = 0;
+  addEventListener('touchend', function (e) {
+    var t = e.changedTouches && e.changedTouches[0];
+    var now = Date.now(), x = t ? t.clientX : 0, y = t ? t.clientY : 0;
+    var quick = now - lt < 400 && Math.abs(x - lx) < 40 && Math.abs(y - ly) < 40;
+    lt = now; lx = x; ly = y;
+    if (!quick) return;
+    var el = e.target;
+    if (el && el.closest && el.closest('button, a, input, select, textarea')) return;
+    e.preventDefault();
+  }, { passive: false, capture: true });
+})();
 </script>
 
 <title>Portland</title>
@@ -91,7 +131,13 @@ for (var i = 0, G = ['gesturestart', 'gesturechange', 'gestureend', 'dblclick'];
     --ink:#f2ece0; --dim:rgba(242,236,224,.62); --rim:rgba(255,255,255,.34);
     --hot:#ffb24a;
   }
-  html,body{margin:0;height:100%;background:#0f1621;overflow:hidden;overscroll-behavior:none;
+  /* PINNED, not merely `overflow:hidden`. On iOS that alone still lets a drag
+     rubber-band the whole document and leaves the canvas off-centre, and the URL
+     bar collapsing resizes the viewport underneath it. Fixed positioning plus
+     overscroll-behavior is what holds it still, and a page that cannot be
+     scrolled is a page with less for a stray gesture to act on. */
+  html,body{margin:0;height:100%;position:fixed;inset:0;width:100%;
+    background:#0f1621;overflow:hidden;overscroll-behavior:none;
     touch-action:manipulation;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
     font-family:var(--ui);color:var(--ink)}
   canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}

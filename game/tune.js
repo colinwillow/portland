@@ -117,7 +117,23 @@ export const MOVE = {
   turnRate: 5.3,         // rad/s, = turnAccel / run. 304 deg/s, a 90 deg in 0.3 s
   turnMin: 2.6,          // rad/s floor, = TURN.ref: the clip's own natural rate
   g: 22,
-  jump: 6.4,
+  // HOW HIGH HE JUMPS, AND IT IS AIMED AT THE CITY RATHER THAN PICKED. It was
+  // 6.4, which against this gravity is an apex of 0.88 m -- knee height on a
+  // 1.78 m man, and nothing in Portland is 0.88 m tall. Measured over the 1844
+  // buildings around the spawn, the lowest roof is 2.2 m and a tenth of them are
+  // under 4.2:
+  //
+  //     apex 2.0 m   NOTHING is reachable
+  //     apex 3.9 m   4% of them -- sheds
+  //     apex 4.7 m   14%, which is every single-storey shopfront and garage
+  //     apex 5.7 m   19%, and a 1.4 s hang, which starts to read as low gravity
+  //
+  // So 4.7: a run-up puts him on a roof, and the move is worth doing rather than
+  // being a bigger version of nothing. Standing 4.66 m, 1.27 s of air, 8.2 m
+  // clear at a full run. `g` is deliberately NOT touched in the same change --
+  // one variable at a time, which is the rule the badge toggles are built on --
+  // so if the hang reads floaty, gravity is the one number to move.
+  jump: 14.4,
   airControl: 0.35,
   radius: 0.42,          // his collision cylinder
   eye: 1.72,
