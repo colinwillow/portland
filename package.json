@@ -5,6 +5,7 @@
   "type": "module",
   "description": "A walkable Portland, procedurally built from open map data.",
   "scripts": {
+    "check": "node tools/syntax.mjs",
     "test": "vitest run",
     "fetch": "python3 tools/fetch_city.py",
     "bake": "python3 tools/bake.py",

@@ -31,14 +31,47 @@ Pages serves `main` from `.github/workflows/pages.yml`. A change sitting on a
 branch cannot be played, and a twin-stick city is only really testable with two
 thumbs on glass. Branch as much as you like while working; **end on `main`**.
 
-Before pushing:
+## Verification budget
+
+**HE TESTS THE GAME. YOU DO NOT.** He asks for a change, you make it, you push
+it, you say **"shipped unverified"** — and then he looks at it on his phone and
+tells you what is next. That is the loop, it is the only loop, and nothing in
+this repo is allowed to get between the change and the phone. A wrong guess
+costs him one look. A verification pass costs him the round trip he was going to
+spend looking anyway, which is strictly worse than being wrong.
+
+**The only thing that runs by default:**
 
 ```sh
-npm test                 # 71 checks against the real baked city in data/
-npm run zoom             # proves the page refuses to double-tap and pinch zoom
-npm run thumbs           # drives the real pads and proves every verb is reachable
-node tools/shot.mjs      # boots the real page in a real Chromium and looks
+npm run check            # ~1s. Does every file still parse?
 ```
+
+That one earns its second, because a file that will not parse is a BLANK PAGE:
+the module never evaluates, the boot card sits for ever on the text it was born
+with, and nothing on screen or in a phone's console says why. That is not a
+wrong guess he can look at and correct — it is a round trip with nothing in it.
+
+**Do NOT run, unless he asks for it by name:**
+
+```sh
+npm test                 # 73 node checks against the real baked city
+npm run zoom             # sends a touch stream and checks the page refuses it
+npm run thumbs           # drives the real pads in a real browser
+node tools/shot.mjs      # boots the page in Chromium and takes a picture
+```
+
+Those exist because of what they FOUND, and the findings are written up
+throughout this file — that is what they are for now. They are a record, not a
+gate. Keep them working when you change what they cover; do not reach for them
+to feel sure before pushing.
+
+If a probe would genuinely settle something reading the code has not — the
+problem is real, it is not going away, and guessing has already failed once —
+say so in one sentence, name the tool, and let him decide. Do not run it and
+report afterwards.
+
+**Reporting:** one or two lines. What changed, what to look at. Say "shipped
+unverified" plainly; do not claim it looks right.
 
 **No zooming, and `touch-action` IS NOT THE FIX FOR DOUBLE TAP.** That was
 written down here as settled for four builds and it was wrong on the only
@@ -83,23 +116,27 @@ the module throws — which is exactly when somebody starts jabbing at a page
 that is not responding.
 
 **And a harness that cannot reach the failing platform has to say so.** There
-is no iOS here. `npm run zoom` runs Chromium, so what it can honestly test is
-whether *our own* guard fires — never whether Safari would have zoomed anyway.
-Anything that reads as "the browser's behaviour" rather than "our listener" is
-outside what any check in this repo can see, and belongs on the phone.
+is no iOS here, and there is no phone here. `npm run zoom` runs Chromium, so
+what it can honestly test is whether *our own* guard fires — never whether
+Safari would have zoomed anyway. Anything that reads as "the browser's
+behaviour" rather than "our listener" is outside what any check in this repo can
+see. So is anything about how it FEELS. Both belong on his phone, which is
+where they were always going.
 
 ## The bar for done
 
 It runs on a phone, in any orientation, with two thumbs. WASD and the arrow keys
 exist so it is debuggable on a laptop and that is all they are for.
 
-**And "with two thumbs" is checked, not asserted.** `npm run thumbs` presses the
-real pads in a real browser and watches the player. The jump shipped as
-`jump() { return keys.has(' ') }` — spacebar and nothing else — so on glass there
-was no jump at all, and nothing on screen said so. Reading the source proves a
-branch exists; it does not prove a gesture reaches it.
+The jump once shipped as `jump() { return keys.has(' ') }` — spacebar and
+nothing else — so on glass there was no jump at all and nothing on screen said
+so. **Whenever a verb is added, the question to ask at the keyboard is which
+thumb reaches it**, because reading the source proves a branch exists and not
+that a gesture reaches it. `npm run thumbs` is what settled that one; it is not
+something to run before every push.
 
-Two things about that harness, both of which had it green and meaningless first:
+Two things about that harness, both of which had it green and meaningless first
+(worth knowing if it is ever reached for again):
 
 * **It has to press START.** `makeSticks()` lives inside `start()`, and `#boot`
   is `z-index: 20` across the whole viewport until then — so a tap sent early
